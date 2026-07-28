@@ -217,7 +217,7 @@ export default function HalftoneStudio() {
           <div className="preview-head">
             <div>
               <span className="eyebrow">01 / Pattern preview</span>
-              <h1 id="page-title">把明暗，变成可印刷的节奏。</h1>
+              <h1 id="page-title">创造你自己的半调图案</h1>
             </div>
             <div className="measure">
               {settings.widthMm} × {settings.heightMm} MM
