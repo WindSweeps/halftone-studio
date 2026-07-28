@@ -2,6 +2,8 @@
 
 一个在浏览器中运行的半调图案生成器。实时调整网点间距、大小、对比度、网屏角度、成品尺寸与颜色，并导出 SVG 矢量图或带 300 ppi 元数据的 PNG。
 
+在线使用：[GitHub Pages](https://windsweeps.github.io/halftone-studio/)
+
 ## 功能
 
 - 三种基础生成模型：流动波纹、径向脉冲、线性渐变
@@ -21,4 +23,12 @@ pnpm dev
 
 ```bash
 pnpm build
+```
+
+GitHub Pages 静态构建：
+
+```bash
+GITHUB_ACTIONS=true \
+NEXT_PUBLIC_SITE_URL=https://windsweeps.github.io/halftone-studio \
+pnpm build:pages
 ```
