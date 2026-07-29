@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Pattern = "wave" | "radial" | "linear";
+type DotShape = "circle" | "square" | "hexagon";
+type Lattice = "square" | "hexagonal";
 
 type Settings = {
   pattern: Pattern;
+  dotShape: DotShape;
+  lattice: Lattice;
   cellSize: number;
   dotScale: number;
   contrast: number;
@@ -19,6 +23,8 @@ type Settings = {
 
 const DEFAULTS: Settings = {
   pattern: "wave",
+  dotShape: "circle",
+  lattice: "square",
   cellSize: 4.2,
   dotScale: 88,
   contrast: 82,
@@ -65,18 +71,61 @@ function forEachDot(
   callback: (x: number, y: number, radius: number) => void,
 ) {
   const cellPx = Math.max(4, (settings.cellSize / settings.widthMm) * width);
+  const rowStep =
+    settings.lattice === "hexagonal" ? cellPx * (Math.sqrt(3) / 2) : cellPx;
   const columns = Math.ceil(width / cellPx) + 1;
-  const rows = Math.ceil(height / cellPx) + 1;
+  const rows = Math.ceil(height / rowStep) + 1;
 
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const x = (column + 0.5) * cellPx;
-      const y = (row + 0.5) * cellPx;
+  for (let row = -1; row < rows; row += 1) {
+    const rowOffset =
+      settings.lattice === "hexagonal" && Math.abs(row % 2) === 1 ? 0.5 : 0;
+    for (let column = -1; column < columns; column += 1) {
+      const x = (column + 0.5 + rowOffset) * cellPx;
+      const y = (row + 0.5) * rowStep;
       const tone = toneAt(x / width, y / height, settings);
       const radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
       callback(x, y, radius);
     }
   }
+}
+
+function polygonPoints(
+  x: number,
+  y: number,
+  radius: number,
+  sides: number,
+  rotation: number,
+) {
+  return Array.from({ length: sides }, (_, index) => {
+    const angle = rotation + (index * Math.PI * 2) / sides;
+    return {
+      x: x + Math.cos(angle) * radius,
+      y: y + Math.sin(angle) * radius,
+    };
+  });
+}
+
+function traceDot(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  shape: DotShape,
+) {
+  if (shape === "circle") {
+    context.moveTo(x + radius, y);
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    return;
+  }
+
+  const sides = shape === "square" ? 4 : 6;
+  const rotation = shape === "square" ? Math.PI / 4 : Math.PI / 6;
+  const points = polygonPoints(x, y, radius, sides, rotation);
+  context.moveTo(points[0].x, points[0].y);
+  for (const point of points.slice(1)) {
+    context.lineTo(point.x, point.y);
+  }
+  context.closePath();
 }
 
 function drawPattern(
@@ -95,8 +144,7 @@ function drawPattern(
   context.fillStyle = settings.ink;
   context.beginPath();
   forEachDot(width, height, settings, (x, y, radius) => {
-    context.moveTo(x + radius, y);
-    context.arc(x, y, radius, 0, Math.PI * 2);
+    traceDot(context, x, y, radius, settings.dotShape);
   });
   context.fill();
 }
@@ -142,6 +190,19 @@ function withPpi(png: Uint8Array, ppi: number) {
 
 function escapeXml(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+}
+
+function svgDot(x: number, y: number, radius: number, shape: DotShape) {
+  if (shape === "circle") {
+    return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}"/>`;
+  }
+
+  const sides = shape === "square" ? 4 : 6;
+  const rotation = shape === "square" ? Math.PI / 4 : Math.PI / 6;
+  const points = polygonPoints(x, y, radius, sides, rotation)
+    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+    .join(" ");
+  return `<polygon points="${points}"/>`;
 }
 
 export default function HalftoneStudio() {
@@ -191,12 +252,15 @@ export default function HalftoneStudio() {
   const exportSvg = useCallback(() => {
     const width = Math.round(settings.widthMm * 10);
     const height = Math.round(settings.heightMm * 10);
-    const circles: string[] = [];
+    const elements: string[] = [];
     forEachDot(width, height, settings, (x, y, radius) => {
-      circles.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}"/>`);
+      elements.push(svgDot(x, y, radius, settings.dotShape));
     });
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${settings.widthMm}mm" height="${settings.heightMm}mm" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${escapeXml(settings.paper)}"/><g fill="${escapeXml(settings.ink)}">${circles.join("")}</g></svg>`;
-    downloadBlob(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }), `halftone-${settings.widthMm}x${settings.heightMm}mm.svg`);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${settings.widthMm}mm" height="${settings.heightMm}mm" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${escapeXml(settings.paper)}"/><g fill="${escapeXml(settings.ink)}">${elements.join("")}</g></svg>`;
+    downloadBlob(
+      new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+      `halftone-${settings.dotShape}-${settings.lattice}-${settings.widthMm}x${settings.heightMm}mm.svg`,
+    );
   }, [settings]);
 
   return (
@@ -235,7 +299,7 @@ export default function HalftoneStudio() {
           </div>
 
           <div className="preview-foot">
-            <span>每一个圆点都是独立矢量元素。</span>
+            <span>每一个重复单元都是独立矢量元素。</span>
             <span>文件只在你的浏览器中生成，不会上传。</span>
           </div>
         </section>
@@ -257,6 +321,23 @@ export default function HalftoneStudio() {
                   <option value="wave">流动波纹</option>
                   <option value="radial">径向脉冲</option>
                   <option value="linear">线性渐变</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span className="field-label">重复单元形状</span>
+                <select value={settings.dotShape} onChange={(event) => update("dotShape", event.target.value as DotShape)}>
+                  <option value="circle">圆形</option>
+                  <option value="square">正方形</option>
+                  <option value="hexagon">六边形</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span className="field-label">重复方向</span>
+                <select value={settings.lattice} onChange={(event) => update("lattice", event.target.value as Lattice)}>
+                  <option value="square">四方平移 · 0° / 90°</option>
+                  <option value="hexagonal">六角平移 · 0° / 60° / 120°</option>
                 </select>
               </label>
 

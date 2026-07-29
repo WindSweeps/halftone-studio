@@ -18,5 +18,7 @@ test("server renders the halftone studio shell", async () => {
   assert.match(html, /半调图案生成器/);
   assert.match(html, /导出 PNG/);
   assert.match(html, /导出 SVG/);
+  assert.match(html, /重复单元形状/);
+  assert.match(html, /六角平移/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
