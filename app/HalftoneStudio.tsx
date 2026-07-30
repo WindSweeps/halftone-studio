@@ -44,6 +44,9 @@ type Settings = {
   radialRatio: number;
   radialAngle: number;
   radialPeriod: number;
+  gaussianDeltaRatio: number;
+  periodicMin: number;
+  periodicMax: number;
 };
 
 const DEFAULTS: Settings = {
@@ -66,6 +69,9 @@ const DEFAULTS: Settings = {
   radialRatio: 1,
   radialAngle: 0,
   radialPeriod: 6,
+  gaussianDeltaRatio: 0.14,
+  periodicMin: 0,
+  periodicMax: 100,
 };
 
 const DEFAULT_IMAGE_METRICS: ImageMetrics = {
@@ -98,6 +104,23 @@ function rotatePoint(x: number, y: number, degrees: number) {
     x: x * Math.cos(radians) - y * Math.sin(radians),
     y: x * Math.sin(radians) + y * Math.cos(radians),
   };
+}
+
+function periodicGaussian(
+  phase: number,
+  deltaRatio: number,
+  minimum: number,
+  maximum: number,
+) {
+  const wrapped = ((phase % 1) + 1) % 1;
+  const distance = Math.abs(wrapped - 0.5);
+  const delta = Math.max(0.01, deltaRatio);
+  const edge = Math.exp(-0.5 * (0.5 / delta) ** 2);
+  const gaussian = Math.exp(-0.5 * (distance / delta) ** 2);
+  const normalized = clamp((gaussian - edge) / (1 - edge), 0, 1);
+  const low = minimum / 100;
+  const high = maximum / 100;
+  return low + normalized * (high - low);
 }
 
 function imageToneAt(
@@ -153,10 +176,12 @@ function toneAt(
       radial.x / settings.radialRatio,
       radial.y * settings.radialRatio,
     );
-    value =
-      (Math.sin(ellipticalDistance * Math.PI * 2 * settings.radialPeriod) +
-        1) /
-      2;
+    value = periodicGaussian(
+      ellipticalDistance * settings.radialPeriod,
+      settings.gaussianDeltaRatio,
+      settings.periodicMin,
+      settings.periodicMax,
+    );
   } else if (settings.pattern === "linear") {
     const gradient = rotatePoint(rx, ry, settings.gradientDirection);
     value = clamp(gradient.x + 0.5, 0, 1);
@@ -164,14 +189,16 @@ function toneAt(
     value = imageToneAt(x, y, asset, imageMetrics);
   } else {
     const wave = rotatePoint(rx, ry, settings.waveDirection);
-    const waveAmplitude = (settings.waveAmplitude / 100) * Math.PI * 1.5;
-    value =
-      (Math.sin(
-        wave.x * Math.PI * 2 * settings.wavePeriod +
-          Math.sin(wave.y * Math.PI * settings.wavePeriod) * waveAmplitude,
-      ) +
-        1) /
-      2;
+    const waveAmplitude = (settings.waveAmplitude / 100) * 0.75;
+    const phase =
+      wave.x * settings.wavePeriod +
+      Math.sin(wave.y * Math.PI * settings.wavePeriod) * waveAmplitude;
+    value = periodicGaussian(
+      phase,
+      settings.gaussianDeltaRatio,
+      settings.periodicMin,
+      settings.periodicMax,
+    );
   }
 
   const contrasted = clamp((value - 0.5) * (0.7 + settings.contrast / 42) + 0.5, 0, 1);
@@ -433,6 +460,49 @@ function MetricSlider({
   );
 }
 
+function GaussianProfileChart({
+  deltaRatio,
+  minimum,
+  maximum,
+}: {
+  deltaRatio: number;
+  minimum: number;
+  maximum: number;
+}) {
+  const points = Array.from({ length: 81 }, (_, index) => {
+    const phase = index / 80;
+    const value = periodicGaussian(phase, deltaRatio, minimum, maximum);
+    return `${(phase * 280 + 20).toFixed(1)},${(112 - value * 88).toFixed(1)}`;
+  }).join(" ");
+
+  return (
+    <figure className="profile-chart">
+      <figcaption>
+        <span>单周期渐变函数</span>
+        <strong>GAUSSIAN</strong>
+      </figcaption>
+      <svg
+        viewBox="0 0 320 136"
+        role="img"
+        aria-label={`一个周期内的高斯渐变函数，delta 与周期比为 ${deltaRatio.toFixed(2)}`}
+      >
+        <line x1="20" y1="112" x2="300" y2="112" />
+        <line x1="20" y1="20" x2="20" y2="112" />
+        <line className="profile-midline" x1="160" y1="20" x2="160" y2="112" />
+        <polyline points={points} />
+        <text x="20" y="130">0</text>
+        <text x="156" y="130">T/2</text>
+        <text x="295" y="130">T</text>
+      </svg>
+      <div className="profile-chart-meta">
+        <span>MIN {minimum}%</span>
+        <span>δ/T {deltaRatio.toFixed(2)}</span>
+        <span>MAX {maximum}%</span>
+      </div>
+    </figure>
+  );
+}
+
 export default function HalftoneStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -445,6 +515,8 @@ export default function HalftoneStudio() {
   const [uploadError, setUploadError] = useState("");
   const [loadingImage, setLoadingImage] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const isPeriodicPattern =
+    settings.pattern === "wave" || settings.pattern === "radial";
 
   const exportSize = useMemo(() => {
     const width = Math.round(settings.widthMm * PX_PER_MM);
@@ -510,6 +582,9 @@ export default function HalftoneStudio() {
           waveAmplitude: DEFAULTS.waveAmplitude,
           wavePeriod: DEFAULTS.wavePeriod,
           waveDirection: DEFAULTS.waveDirection,
+          gaussianDeltaRatio: DEFAULTS.gaussianDeltaRatio,
+          periodicMin: DEFAULTS.periodicMin,
+          periodicMax: DEFAULTS.periodicMax,
         };
       }
       if (current.pattern === "linear") {
@@ -523,6 +598,9 @@ export default function HalftoneStudio() {
         radialRatio: DEFAULTS.radialRatio,
         radialAngle: DEFAULTS.radialAngle,
         radialPeriod: DEFAULTS.radialPeriod,
+        gaussianDeltaRatio: DEFAULTS.gaussianDeltaRatio,
+        periodicMin: DEFAULTS.periodicMin,
+        periodicMax: DEFAULTS.periodicMax,
       };
     });
   }, [settings.pattern]);
@@ -666,6 +744,46 @@ export default function HalftoneStudio() {
             </div>
 
             <div className="editor-control-list">
+              {isPeriodicPattern && (
+                <div className="periodic-profile-editor">
+                  <GaussianProfileChart
+                    deltaRatio={settings.gaussianDeltaRatio}
+                    minimum={settings.periodicMin}
+                    maximum={settings.periodicMax}
+                  />
+                  <div className="profile-controls" aria-label="周期渐变函数参数">
+                    <MetricSlider
+                      label="δ / T"
+                      value={settings.gaussianDeltaRatio}
+                      suffix=""
+                      min={0.03}
+                      max={0.45}
+                      step={0.01}
+                      onChange={(value) => update("gaussianDeltaRatio", value)}
+                    />
+                    <MetricSlider
+                      label="最小值"
+                      value={settings.periodicMin}
+                      suffix="%"
+                      min={0}
+                      max={100}
+                      onChange={(value) =>
+                        update("periodicMin", Math.min(value, settings.periodicMax))
+                      }
+                    />
+                    <MetricSlider
+                      label="最大值"
+                      value={settings.periodicMax}
+                      suffix="%"
+                      min={0}
+                      max={100}
+                      onChange={(value) =>
+                        update("periodicMax", Math.max(value, settings.periodicMin))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
               {isImageEditor && (
                 <>
                   <MetricSlider label="亮度" value={imageMetrics.brightness} suffix="%" min={20} max={180} onChange={(value) => updateImageMetric("brightness", value)} />
@@ -696,10 +814,18 @@ export default function HalftoneStudio() {
             </div>
 
             <div className="editor-note">
-              <strong>{isImageEditor ? "透明底建议" : "原始场预览"}</strong>
+              <strong>
+                {isImageEditor
+                  ? "透明底建议"
+                  : isPeriodicPattern
+                    ? "高斯周期函数"
+                    : "原始场预览"}
+              </strong>
               {isImageEditor
                 ? "PNG 或 WebP 的透明背景能让轮廓更干净。Alpha 阈值越高，越多半透明边缘会被忽略。"
-                : "白色表示较小网点，黑色表示较大网点。这里不显示重复单元形状，便于专注调整生成模型。"}
+                : isPeriodicPattern
+                  ? "δ/T 控制峰值宽度；最小值和最大值限定一个周期内的明暗范围。白色表示较小网点，黑色表示较大网点。"
+                  : "白色表示较小网点，黑色表示较大网点。这里不显示重复单元形状，便于专注调整生成模型。"}
             </div>
 
             <div className="editor-actions">

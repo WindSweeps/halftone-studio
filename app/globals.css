@@ -524,6 +524,88 @@ input[type="range"] {
   gap: 20px;
 }
 
+.profile-chart {
+  margin: 0;
+  border: 1px solid var(--ink);
+  background: var(--soft);
+}
+
+.profile-chart figcaption,
+.profile-chart-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.profile-chart figcaption {
+  border-bottom: 1px solid var(--ink);
+}
+
+.profile-chart figcaption strong {
+  color: var(--accent);
+}
+
+.profile-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    var(--paper);
+  background-size: 16px 16px;
+}
+
+.profile-chart line {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.profile-chart .profile-midline {
+  stroke-dasharray: 3 4;
+  opacity: .55;
+}
+
+.profile-chart polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.profile-chart text {
+  fill: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+}
+
+.profile-chart-meta {
+  border-top: 1px solid var(--ink);
+  color: var(--muted);
+}
+
+.profile-controls {
+  display: grid;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background: var(--paper);
+}
+
+.periodic-profile-editor {
+  display: grid;
+  gap: 0;
+}
+
 .editor-note {
   padding: 14px;
   border-left: 3px solid var(--accent);
