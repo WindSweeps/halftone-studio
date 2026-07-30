@@ -51,4 +51,5 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /σ \/ T/);
   assert.match(source, /periodicGaussian/);
   assert.match(source, /periodOffset = -4/);
+  assert.match(source, /max="150".*settings\.dotScale/);
 });

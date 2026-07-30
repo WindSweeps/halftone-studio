@@ -1124,7 +1124,7 @@ export default function HalftoneStudio() {
                 <span className="field-label">
                   网点大小 <span className="field-value">{settings.dotScale}%</span>
                 </span>
-                <input type="range" min="20" max="100" step="1" value={settings.dotScale} onChange={(event) => update("dotScale", Number(event.target.value))} />
+                <input type="range" min="20" max="150" step="1" value={settings.dotScale} onChange={(event) => update("dotScale", Number(event.target.value))} />
               </label>
 
               <label className="field">
