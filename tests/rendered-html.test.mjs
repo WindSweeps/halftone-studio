@@ -23,6 +23,7 @@ test("server renders the halftone studio shell", async () => {
   assert.match(html, /六角平移/);
   assert.match(html, /上传自己的图片/);
   assert.match(html, /波浪大小/);
+  assert.match(html, /开始编辑/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
@@ -40,4 +41,8 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /椭圆形状/);
   assert.match(source, /椭圆朝向/);
   assert.match(source, /循环周期/);
+  assert.match(source, /Original source field/);
+  assert.match(source, /NO HALFTONE DOTS/);
+  assert.match(source, /if \(view === "editor"\)/);
+  assert.match(source, /if \(view === "complete"\)/);
 });

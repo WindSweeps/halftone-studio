@@ -81,6 +81,13 @@ const PPI = 300;
 const PX_PER_MM = PPI / 25.4;
 const MAX_EXPORT_PIXELS = 18_000_000;
 
+const PATTERN_LABELS: Record<Pattern, string> = {
+  wave: "流动波纹",
+  radial: "径向脉冲",
+  linear: "线性渐变",
+  image: "上传图片",
+};
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -266,6 +273,41 @@ function drawPattern(
   context.fill();
 }
 
+function drawSourceField(
+  canvas: HTMLCanvasElement,
+  settings: Settings,
+  asset: SourceAsset | null,
+  imageMetrics: ImageMetrics,
+) {
+  const width = 720;
+  const height = 480;
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  const imageData = context.createImageData(width, height);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const tone = toneAt(
+        (x + 0.5) / width,
+        (y + 0.5) / height,
+        settings,
+        asset,
+        imageMetrics,
+      );
+      const value = Math.round((1 - tone) * 255);
+      const index = (y * width + x) * 4;
+      imageData.data[index] = value;
+      imageData.data[index + 1] = value;
+      imageData.data[index + 2] = value;
+      imageData.data[index + 3] = 255;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -393,6 +435,7 @@ function MetricSlider({
 
 export default function HalftoneStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const [view, setView] = useState<View>("studio");
   const [sourceAsset, setSourceAsset] = useState<SourceAsset | null>(null);
@@ -430,6 +473,13 @@ export default function HalftoneStudio() {
   }, [settings, sourceAsset, imageMetrics]);
 
   useEffect(() => {
+    if (view !== "editor" || settings.pattern === "image") return;
+    const canvas = sourceCanvasRef.current;
+    if (!canvas) return;
+    drawSourceField(canvas, settings, sourceAsset, imageMetrics);
+  }, [view, settings, sourceAsset, imageMetrics]);
+
+  useEffect(() => {
     return () => {
       if (sourceAsset) URL.revokeObjectURL(sourceAsset.url);
     };
@@ -445,6 +495,36 @@ export default function HalftoneStudio() {
     },
     [],
   );
+
+  const resetCurrentModel = useCallback(() => {
+    if (settings.pattern === "image") {
+      setImageMetrics(DEFAULT_IMAGE_METRICS);
+      return;
+    }
+
+    setSettings((current) => {
+      if (current.pattern === "wave") {
+        return {
+          ...current,
+          waveAmplitude: DEFAULTS.waveAmplitude,
+          wavePeriod: DEFAULTS.wavePeriod,
+          waveDirection: DEFAULTS.waveDirection,
+        };
+      }
+      if (current.pattern === "linear") {
+        return {
+          ...current,
+          gradientDirection: DEFAULTS.gradientDirection,
+        };
+      }
+      return {
+        ...current,
+        radialRatio: DEFAULTS.radialRatio,
+        radialAngle: DEFAULTS.radialAngle,
+        radialPeriod: DEFAULTS.radialPeriod,
+      };
+    });
+  }, [settings.pattern]);
 
   const uploadImage = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -510,117 +590,115 @@ export default function HalftoneStudio() {
     );
   }, [settings, sourceAsset, imageMetrics]);
 
-  if (view === "editor" && sourceAsset) {
+  if (view === "editor") {
+    const isImageEditor = settings.pattern === "image";
     return (
       <main className="editor-view">
         <header className="topbar editor-topbar">
           <div className="brand">
             <span className="brand-mark" aria-hidden="true" />
-            IMAGE / EDITOR
+            {PATTERN_LABELS[settings.pattern]} / EDITOR
           </div>
-          <span className="editor-step">02 / ALPHA SOURCE</span>
+          <span className="editor-step">
+            02 / {isImageEditor ? "ALPHA SOURCE" : "SOURCE FIELD"}
+          </span>
         </header>
 
         <div className="editor-shell">
           <section className="editor-preview-panel" aria-labelledby="editor-title">
             <div className="editor-copy">
-              <span className="eyebrow">Original alpha preview</span>
-              <h1 id="editor-title">先整理原图，再交给半调。</h1>
+              <span className="eyebrow">
+                {isImageEditor ? "Original alpha preview" : "Original source field"}
+              </span>
+              <h1 id="editor-title">
+                {isImageEditor ? "先整理原图，再交给半调。" : `编辑${PATTERN_LABELS[settings.pattern]}的原始场。`}
+              </h1>
               <p>
-                这里始终显示未半调化的原始 Alpha 图片。棋盘格代表透明区域，
-                参数只改变取样方式。
+                {isImageEditor
+                  ? "这里始终显示未半调化的原始 Alpha 图片。棋盘格代表透明区域，参数只改变取样方式。"
+                  : "这里显示尚未转换为半调网点的连续明暗场。调整右侧参数，完成后再回到生成器查看网点效果。"}
               </p>
             </div>
 
             <div className="alpha-stage">
-              <div className="alpha-image-wrap">
-                {/* Object URLs from local uploads cannot use Next Image optimization. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={sourceAsset.url}
-                  alt={`${sourceAsset.name} 原始 Alpha 预览`}
-                  style={{
-                    filter: `brightness(${imageMetrics.brightness}%) contrast(${imageMetrics.contrast}%)`,
-                    transform: `translate(${imageMetrics.offsetX}%, ${imageMetrics.offsetY}%) scale(${imageMetrics.scale / 100})`,
-                  }}
-                />
+              <div className={`alpha-image-wrap${isImageEditor ? "" : " source-field-wrap"}`}>
+                {isImageEditor && sourceAsset ? (
+                  <>
+                    {/* Object URLs from local uploads cannot use Next Image optimization. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={sourceAsset.url}
+                      alt={`${sourceAsset.name} 原始 Alpha 预览`}
+                      style={{
+                        filter: `brightness(${imageMetrics.brightness}%) contrast(${imageMetrics.contrast}%)`,
+                        transform: `translate(${imageMetrics.offsetX}%, ${imageMetrics.offsetY}%) scale(${imageMetrics.scale / 100})`,
+                      }}
+                    />
+                  </>
+                ) : (
+                  <canvas
+                    ref={sourceCanvasRef}
+                    className="source-field-canvas"
+                    aria-label={`${PATTERN_LABELS[settings.pattern]}原始明暗场`}
+                  />
+                )}
               </div>
               <div className="alpha-stage-meta">
-                <span>{sourceAsset.name}</span>
                 <span>
-                  {sourceAsset.width} × {sourceAsset.height} PX
+                  {isImageEditor ? sourceAsset?.name : PATTERN_LABELS[settings.pattern]}
                 </span>
+                <span>{isImageEditor ? "RAW ALPHA" : "NO HALFTONE DOTS"}</span>
               </div>
             </div>
           </section>
 
-          <aside className="editor-controls" aria-label="图片取样参数">
+          <aside className="editor-controls" aria-label={`${PATTERN_LABELS[settings.pattern]}编辑参数`}>
             <div className="control-header">
-              <h2>图片参数</h2>
+              <h2>{isImageEditor ? "图片参数" : "模型参数"}</h2>
               <button
                 className="reset"
                 type="button"
-                onClick={() => setImageMetrics(DEFAULT_IMAGE_METRICS)}
+                onClick={resetCurrentModel}
               >
                 恢复默认
               </button>
             </div>
 
             <div className="editor-control-list">
-              <MetricSlider
-                label="亮度"
-                value={imageMetrics.brightness}
-                suffix="%"
-                min={20}
-                max={180}
-                onChange={(value) => updateImageMetric("brightness", value)}
-              />
-              <MetricSlider
-                label="对比度"
-                value={imageMetrics.contrast}
-                suffix="%"
-                min={20}
-                max={200}
-                onChange={(value) => updateImageMetric("contrast", value)}
-              />
-              <MetricSlider
-                label="Alpha 阈值"
-                value={imageMetrics.alphaThreshold}
-                suffix="%"
-                min={0}
-                max={100}
-                onChange={(value) => updateImageMetric("alphaThreshold", value)}
-              />
-              <MetricSlider
-                label="图片缩放"
-                value={imageMetrics.scale}
-                suffix="%"
-                min={40}
-                max={200}
-                onChange={(value) => updateImageMetric("scale", value)}
-              />
-              <MetricSlider
-                label="水平位置"
-                value={imageMetrics.offsetX}
-                suffix="%"
-                min={-50}
-                max={50}
-                onChange={(value) => updateImageMetric("offsetX", value)}
-              />
-              <MetricSlider
-                label="垂直位置"
-                value={imageMetrics.offsetY}
-                suffix="%"
-                min={-50}
-                max={50}
-                onChange={(value) => updateImageMetric("offsetY", value)}
-              />
+              {isImageEditor && (
+                <>
+                  <MetricSlider label="亮度" value={imageMetrics.brightness} suffix="%" min={20} max={180} onChange={(value) => updateImageMetric("brightness", value)} />
+                  <MetricSlider label="对比度" value={imageMetrics.contrast} suffix="%" min={20} max={200} onChange={(value) => updateImageMetric("contrast", value)} />
+                  <MetricSlider label="Alpha 阈值" value={imageMetrics.alphaThreshold} suffix="%" min={0} max={100} onChange={(value) => updateImageMetric("alphaThreshold", value)} />
+                  <MetricSlider label="图片缩放" value={imageMetrics.scale} suffix="%" min={40} max={200} onChange={(value) => updateImageMetric("scale", value)} />
+                  <MetricSlider label="水平位置" value={imageMetrics.offsetX} suffix="%" min={-50} max={50} onChange={(value) => updateImageMetric("offsetX", value)} />
+                  <MetricSlider label="垂直位置" value={imageMetrics.offsetY} suffix="%" min={-50} max={50} onChange={(value) => updateImageMetric("offsetY", value)} />
+                </>
+              )}
+              {settings.pattern === "wave" && (
+                <>
+                  <MetricSlider label="波浪大小" value={settings.waveAmplitude} suffix="%" min={0} max={100} onChange={(value) => update("waveAmplitude", value)} />
+                  <MetricSlider label="波浪周期" value={settings.wavePeriod} suffix="" min={1} max={12} step={0.5} onChange={(value) => update("wavePeriod", value)} />
+                  <MetricSlider label="波浪方向" value={settings.waveDirection} suffix="°" min={-180} max={180} onChange={(value) => update("waveDirection", value)} />
+                </>
+              )}
+              {settings.pattern === "linear" && (
+                <MetricSlider label="渐变方向" value={settings.gradientDirection} suffix="°" min={-180} max={180} onChange={(value) => update("gradientDirection", value)} />
+              )}
+              {settings.pattern === "radial" && (
+                <>
+                  <MetricSlider label="椭圆形状" value={settings.radialRatio} suffix="×" min={0.4} max={2.5} step={0.1} onChange={(value) => update("radialRatio", value)} />
+                  <MetricSlider label="椭圆朝向" value={settings.radialAngle} suffix="°" min={0} max={180} onChange={(value) => update("radialAngle", value)} />
+                  <MetricSlider label="循环周期" value={settings.radialPeriod} suffix="" min={2} max={16} step={0.5} onChange={(value) => update("radialPeriod", value)} />
+                </>
+              )}
             </div>
 
             <div className="editor-note">
-              <strong>透明底建议</strong>
-              PNG 或 WebP 的透明背景能让轮廓更干净。Alpha 阈值越高，
-              越多半透明边缘会被忽略。
+              <strong>{isImageEditor ? "透明底建议" : "原始场预览"}</strong>
+              {isImageEditor
+                ? "PNG 或 WebP 的透明背景能让轮廓更干净。Alpha 阈值越高，越多半透明边缘会被忽略。"
+                : "白色表示较小网点，黑色表示较大网点。这里不显示重复单元形状，便于专注调整生成模型。"}
             </div>
 
             <div className="editor-actions">
@@ -646,7 +724,8 @@ export default function HalftoneStudio() {
     );
   }
 
-  if (view === "complete" && sourceAsset) {
+  if (view === "complete") {
+    const isImageComplete = settings.pattern === "image";
     return (
       <main className="complete-view">
         <section className="complete-card" aria-labelledby="complete-title">
@@ -654,23 +733,23 @@ export default function HalftoneStudio() {
           <div className="complete-mark" aria-hidden="true">
             ✓
           </div>
-          <h1 id="complete-title">图片已经准备好。</h1>
+          <h1 id="complete-title">{PATTERN_LABELS[settings.pattern]}已经准备好。</h1>
           <p>
-            原图的 Alpha 通道与取样参数已保存。返回生成器后，
-            预览与两种导出会立即使用这些设置。
+            当前模型参数已经保存。返回生成器后，实时预览、PNG 与 SVG
+            都会使用这组设置。
           </p>
           <dl className="complete-summary">
             <div>
-              <dt>文件</dt>
-              <dd>{sourceAsset.name}</dd>
+              <dt>生成模型</dt>
+              <dd>{PATTERN_LABELS[settings.pattern]}</dd>
             </div>
             <div>
-              <dt>Alpha 阈值</dt>
-              <dd>{imageMetrics.alphaThreshold}%</dd>
+              <dt>{isImageComplete ? "文件" : "重复单元"}</dt>
+              <dd>{isImageComplete ? sourceAsset?.name : settings.dotShape}</dd>
             </div>
             <div>
-              <dt>缩放</dt>
-              <dd>{imageMetrics.scale}%</dd>
+              <dt>{isImageComplete ? "Alpha 阈值" : "重复方向"}</dt>
+              <dd>{isImageComplete ? `${imageMetrics.alphaThreshold}%` : settings.lattice}</dd>
             </div>
           </dl>
           <div className="complete-actions">
@@ -685,7 +764,6 @@ export default function HalftoneStudio() {
               className="button button-primary"
               type="button"
               onClick={() => {
-                setSettings((current) => ({ ...current, pattern: "image" }));
                 setView("studio");
               }}
             >
@@ -785,14 +863,6 @@ export default function HalftoneStudio() {
                       onChange={uploadImage}
                       disabled={loadingImage}
                     />
-                    <button
-                      className="start-edit-button"
-                      type="button"
-                      disabled={!sourceAsset || loadingImage}
-                      onClick={() => setView("editor")}
-                    >
-                      开始编辑 →
-                    </button>
                   </div>
                   {uploadError && (
                     <p className="upload-error" role="alert">
@@ -875,6 +945,19 @@ export default function HalftoneStudio() {
                   />
                 </div>
               )}
+
+              <button
+                className="start-edit-button studio-edit-entry"
+                type="button"
+                disabled={
+                  loadingImage ||
+                  (settings.pattern === "image" && !sourceAsset)
+                }
+                onClick={() => setView("editor")}
+              >
+                <span>开始编辑</span>
+                <span aria-hidden="true">→</span>
+              </button>
 
               <label className="field">
                 <span className="field-label">重复单元形状</span>

@@ -370,6 +370,23 @@ input[type="range"] {
   color: var(--paper);
 }
 
+.studio-edit-entry {
+  width: 100%;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 16px;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.studio-edit-entry:not(:disabled):hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
 .start-edit-button:disabled,
 .button:disabled {
   cursor: not-allowed;
@@ -464,6 +481,17 @@ input[type="range"] {
   max-height: 520px;
   object-fit: contain;
   transform-origin: center;
+}
+
+.source-field-wrap {
+  background: var(--paper);
+}
+
+.source-field-canvas {
+  width: 100%;
+  max-height: 560px;
+  object-fit: cover;
+  image-rendering: auto;
 }
 
 .alpha-stage-meta {
