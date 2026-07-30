@@ -458,6 +458,7 @@ export default function HalftoneStudio() {
   }, [settings.widthMm, settings.heightMm]);
 
   useEffect(() => {
+    if (view !== "studio") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const previewWidth = 1100;
@@ -470,7 +471,7 @@ export default function HalftoneStudio() {
       sourceAsset,
       imageMetrics,
     );
-  }, [settings, sourceAsset, imageMetrics]);
+  }, [view, settings, sourceAsset, imageMetrics]);
 
   useEffect(() => {
     if (view !== "editor" || settings.pattern === "image") return;

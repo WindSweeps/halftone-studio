@@ -45,4 +45,5 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /NO HALFTONE DOTS/);
   assert.match(source, /if \(view === "editor"\)/);
   assert.match(source, /if \(view === "complete"\)/);
+  assert.match(source, /\[view, settings, sourceAsset, imageMetrics\]/);
 });
