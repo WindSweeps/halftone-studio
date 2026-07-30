@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -20,5 +21,23 @@ test("server renders the halftone studio shell", async () => {
   assert.match(html, /导出 SVG/);
   assert.match(html, /重复单元形状/);
   assert.match(html, /六角平移/);
+  assert.match(html, /上传自己的图片/);
+  assert.match(html, /波浪大小/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
+});
+
+test("includes the image editor flow and model-specific metrics", async () => {
+  const source = await readFile(
+    new URL("../app/HalftoneStudio.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /开始编辑/);
+  assert.match(source, /原始 Alpha 图片/);
+  assert.match(source, /完成编辑/);
+  assert.match(source, /应用并返回生成器/);
+  assert.match(source, /渐变方向/);
+  assert.match(source, /椭圆形状/);
+  assert.match(source, /椭圆朝向/);
+  assert.match(source, /循环周期/);
 });
