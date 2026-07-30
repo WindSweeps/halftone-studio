@@ -113,11 +113,17 @@ function periodicGaussian(
   maximum: number,
 ) {
   const wrapped = ((phase % 1) + 1) % 1;
-  const distance = Math.abs(wrapped - 0.5);
   const delta = Math.max(0.01, deltaRatio);
-  const edge = Math.exp(-0.5 * (0.5 / delta) ** 2);
-  const gaussian = Math.exp(-0.5 * (distance / delta) ** 2);
-  const normalized = clamp((gaussian - edge) / (1 - edge), 0, 1);
+  let gaussian = 0;
+  let peak = 0;
+
+  for (let periodOffset = -4; periodOffset <= 4; periodOffset += 1) {
+    const distance = wrapped - 0.5 + periodOffset;
+    gaussian += Math.exp(-0.5 * (distance / delta) ** 2);
+    peak += Math.exp(-0.5 * (periodOffset / delta) ** 2);
+  }
+
+  const normalized = clamp(gaussian / peak, 0, 1);
   const low = minimum / 100;
   const high = maximum / 100;
   return low + normalized * (high - low);
@@ -444,7 +450,11 @@ function MetricSlider({
       <span className="field-label">
         {label}
         <span className="field-value">
-          {Number.isInteger(value) ? value : value.toFixed(1)}
+          {step < 0.1
+            ? value.toFixed(2)
+            : step < 1
+              ? value.toFixed(1)
+              : value}
           {suffix}
         </span>
       </span>
@@ -484,7 +494,7 @@ function GaussianProfileChart({
       <svg
         viewBox="0 0 320 136"
         role="img"
-        aria-label={`一个周期内的高斯渐变函数，delta 与周期比为 ${deltaRatio.toFixed(2)}`}
+        aria-label={`一个周期内的周期高斯渐变函数，sigma 与周期比为 ${deltaRatio.toFixed(2)}`}
       >
         <line x1="20" y1="112" x2="300" y2="112" />
         <line x1="20" y1="20" x2="20" y2="112" />
@@ -496,7 +506,7 @@ function GaussianProfileChart({
       </svg>
       <div className="profile-chart-meta">
         <span>MIN {minimum}%</span>
-        <span>δ/T {deltaRatio.toFixed(2)}</span>
+        <span>σ/T {deltaRatio.toFixed(2)}</span>
         <span>MAX {maximum}%</span>
       </div>
     </figure>
@@ -753,11 +763,11 @@ export default function HalftoneStudio() {
                   />
                   <div className="profile-controls" aria-label="周期渐变函数参数">
                     <MetricSlider
-                      label="δ / T"
+                      label="σ / T"
                       value={settings.gaussianDeltaRatio}
                       suffix=""
                       min={0.03}
-                      max={0.45}
+                      max={0.5}
                       step={0.01}
                       onChange={(value) => update("gaussianDeltaRatio", value)}
                     />
@@ -824,7 +834,7 @@ export default function HalftoneStudio() {
               {isImageEditor
                 ? "PNG 或 WebP 的透明背景能让轮廓更干净。Alpha 阈值越高，越多半透明边缘会被忽略。"
                 : isPeriodicPattern
-                  ? "δ/T 控制峰值宽度；最小值和最大值限定一个周期内的明暗范围。白色表示较小网点，黑色表示较大网点。"
+                  ? "σ/T 控制峰值宽度，并叠加相邻周期的高斯尾部；拉到 0.50 时会覆盖整个周期。最小值和最大值限定明暗范围。"
                   : "白色表示较小网点，黑色表示较大网点。这里不显示重复单元形状，便于专注调整生成模型。"}
             </div>
 
