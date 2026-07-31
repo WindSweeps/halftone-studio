@@ -19,8 +19,6 @@ test("server renders the halftone studio shell", async () => {
   assert.match(html, /半调图案生成器/);
   assert.match(html, /导出 PNG/);
   assert.match(html, /导出 SVG/);
-  assert.match(html, /重复单元形状/);
-  assert.match(html, /六角平移/);
   assert.match(html, /上传自己的图片/);
   assert.match(html, /渐变方向/);
   assert.match(html, /Cyan/);
@@ -56,7 +54,7 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /σ \/ T/);
   assert.match(source, /periodicGaussian/);
   assert.match(source, /periodOffset = -4/);
-  assert.match(source, /max="150".*settings\.dotScale/);
+  assert.match(source, /label="网点大小"[\s\S]*max=\{150\}/);
   assert.match(source, /latticeAngle: 0/);
   assert.match(source, /pattern: "linear"/);
   assert.match(source, /重复方向角度/);
@@ -68,4 +66,11 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /激活通道/);
   assert.match(source, /drawCompositePattern/);
   assert.match(source, /mix-blend-mode:multiply/);
+  assert.match(source, /图案结构 · 所有通道共用/);
+  assert.match(source, /function ChannelPatternControls/);
+  assert.match(source, /重复单元形状/);
+  assert.match(source, /六角平移/);
+  assert.match(source, /setSharedSettings/);
+  assert.doesNotMatch(source, /channel\.sourceAsset/);
+  assert.doesNotMatch(source, /channel\.imageMetrics/);
 });

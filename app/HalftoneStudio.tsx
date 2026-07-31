@@ -58,8 +58,6 @@ type ChannelState = {
   offsetX: number;
   offsetY: number;
   settings: Settings;
-  imageMetrics: ImageMetrics;
-  sourceAsset: SourceAsset | null;
 };
 
 const DEFAULTS: Settings = {
@@ -117,8 +115,6 @@ function createDefaultChannels(): ChannelState[] {
     offsetX: 0,
     offsetY: 0,
     settings: { ...DEFAULTS, ink: preset.color },
-    imageMetrics: { ...DEFAULT_IMAGE_METRICS },
-    sourceAsset: null,
   }));
 }
 
@@ -343,6 +339,8 @@ function drawCompositePattern(
   height: number,
   channels: ChannelState[],
   paper: string,
+  sourceAsset: SourceAsset | null,
+  imageMetrics: ImageMetrics,
 ) {
   canvas.width = width;
   canvas.height = height;
@@ -362,8 +360,8 @@ function drawCompositePattern(
       width,
       height,
       channel.settings,
-      channel.sourceAsset,
-      channel.imageMetrics,
+      sourceAsset,
+      imageMetrics,
       (x, y, radius) => {
         traceDot(context, x, y, radius, channel.settings.dotShape);
       },
@@ -543,6 +541,90 @@ function MetricSlider({
   );
 }
 
+function ChannelPatternControls({
+  settings,
+  update,
+}: {
+  settings: Settings;
+  update: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+}) {
+  return (
+    <div className="channel-pattern-controls">
+      <label className="field">
+        <span className="field-label">重复单元形状</span>
+        <select
+          value={settings.dotShape}
+          onChange={(event) =>
+            update("dotShape", event.target.value as DotShape)
+          }
+        >
+          <option value="circle">圆形</option>
+          <option value="square">正方形</option>
+          <option value="hexagon">六边形</option>
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">重复方向</span>
+        <select
+          value={settings.lattice}
+          onChange={(event) =>
+            update("lattice", event.target.value as Lattice)
+          }
+        >
+          <option value="square">四方平移 · 0° / 90°</option>
+          <option value="hexagonal">
+            六角平移 · 0° / 60° / 120°
+          </option>
+        </select>
+      </label>
+      <MetricSlider
+        label="网格间距"
+        value={settings.cellSize}
+        suffix=" mm"
+        min={2}
+        max={10}
+        step={0.1}
+        onChange={(value) => update("cellSize", value)}
+      />
+      <MetricSlider
+        label="网点大小"
+        value={settings.dotScale}
+        suffix="%"
+        min={20}
+        max={150}
+        onChange={(value) => update("dotScale", value)}
+      />
+      <MetricSlider
+        label="对比度"
+        value={settings.contrast}
+        suffix="%"
+        min={20}
+        max={100}
+        onChange={(value) => update("contrast", value)}
+      />
+      <MetricSlider
+        label="重复方向角度"
+        value={settings.latticeAngle}
+        suffix="°"
+        min={-180}
+        max={180}
+        onChange={(value) => update("latticeAngle", value)}
+      />
+      <div className="toggle-row">
+        反转明暗
+        <button
+          className="switch"
+          type="button"
+          role="switch"
+          aria-checked={settings.invert}
+          aria-label="反转明暗"
+          onClick={() => update("invert", !settings.invert)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function GaussianProfileChart({
   deltaRatio,
   minimum,
@@ -590,6 +672,10 @@ export default function HalftoneStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
   const [channels, setChannels] = useState<ChannelState[]>(createDefaultChannels);
+  const [sourceAsset, setSourceAsset] = useState<SourceAsset | null>(null);
+  const [imageMetrics, setImageMetrics] = useState<ImageMetrics>({
+    ...DEFAULT_IMAGE_METRICS,
+  });
   const [selectedChannelId, setSelectedChannelId] = useState<ChannelId>("C");
   const [expandedChannelId, setExpandedChannelId] =
     useState<ChannelId | null>(null);
@@ -597,12 +683,10 @@ export default function HalftoneStudio() {
   const [uploadError, setUploadError] = useState("");
   const [loadingImage, setLoadingImage] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const channelsRef = useRef(channels);
+  const sourceAssetRef = useRef(sourceAsset);
   const selectedChannel =
     channels.find((channel) => channel.id === selectedChannelId) ?? channels[0];
   const settings = selectedChannel.settings;
-  const sourceAsset = selectedChannel.sourceAsset;
-  const imageMetrics = selectedChannel.imageMetrics;
 
   const setSettings = useCallback(
     (next: React.SetStateAction<Settings>) => {
@@ -623,36 +707,34 @@ export default function HalftoneStudio() {
     [selectedChannelId],
   );
 
-  const setImageMetrics = useCallback(
-    (next: React.SetStateAction<ImageMetrics>) => {
-      setChannels((current) =>
-        current.map((channel) =>
-          channel.id === selectedChannelId
-            ? {
-                ...channel,
-                imageMetrics:
-                  typeof next === "function"
-                    ? next(channel.imageMetrics)
-                    : next,
-              }
-            : channel,
-        ),
-      );
+  const setSharedSettings = useCallback(
+    (next: React.SetStateAction<Settings>) => {
+      setChannels((current) => {
+        const base = current[0]?.settings ?? DEFAULTS;
+        const resolved = typeof next === "function" ? next(base) : next;
+        return current.map((channel) => ({
+          ...channel,
+          settings: {
+            ...channel.settings,
+            pattern: resolved.pattern,
+            widthMm: resolved.widthMm,
+            heightMm: resolved.heightMm,
+            paper: resolved.paper,
+            waveAmplitude: resolved.waveAmplitude,
+            wavePeriod: resolved.wavePeriod,
+            waveDirection: resolved.waveDirection,
+            gradientDirection: resolved.gradientDirection,
+            radialRatio: resolved.radialRatio,
+            radialAngle: resolved.radialAngle,
+            radialPeriod: resolved.radialPeriod,
+            gaussianDeltaRatio: resolved.gaussianDeltaRatio,
+            periodicMin: resolved.periodicMin,
+            periodicMax: resolved.periodicMax,
+          },
+        }));
+      });
     },
-    [selectedChannelId],
-  );
-
-  const setSourceAsset = useCallback(
-    (source: SourceAsset | null) => {
-      setChannels((current) =>
-        current.map((channel) =>
-          channel.id === selectedChannelId
-            ? { ...channel, sourceAsset: source }
-            : channel,
-        ),
-      );
-    },
-    [selectedChannelId],
+    [],
   );
 
   const updateChannel = useCallback(
@@ -697,8 +779,18 @@ export default function HalftoneStudio() {
       previewHeight,
       channels,
       settings.paper,
+      sourceAsset,
+      imageMetrics,
     );
-  }, [view, channels, settings.heightMm, settings.widthMm, settings.paper]);
+  }, [
+    view,
+    channels,
+    settings.heightMm,
+    settings.widthMm,
+    settings.paper,
+    sourceAsset,
+    imageMetrics,
+  ]);
 
   useEffect(() => {
     if (view !== "editor" || settings.pattern === "image") return;
@@ -715,13 +807,13 @@ export default function HalftoneStudio() {
   }, [view, settings, sourceAsset, imageMetrics, selectedChannel]);
 
   useEffect(() => {
-    channelsRef.current = channels;
-  }, [channels]);
+    sourceAssetRef.current = sourceAsset;
+  }, [sourceAsset]);
 
   useEffect(() => {
     return () => {
-      for (const channel of channelsRef.current) {
-        if (channel.sourceAsset) URL.revokeObjectURL(channel.sourceAsset.url);
+      if (sourceAssetRef.current) {
+        URL.revokeObjectURL(sourceAssetRef.current.url);
       }
     };
   }, []);
@@ -729,6 +821,13 @@ export default function HalftoneStudio() {
   const update = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }));
   }, [setSettings]);
+
+  const updateShared = useCallback(
+    <K extends keyof Settings>(key: K, value: Settings[K]) => {
+      setSharedSettings((current) => ({ ...current, [key]: value }));
+    },
+    [setSharedSettings],
+  );
 
   const updateImageMetric = useCallback(
     <K extends keyof ImageMetrics>(key: K, value: ImageMetrics[K]) => {
@@ -743,7 +842,7 @@ export default function HalftoneStudio() {
       return;
     }
 
-    setSettings((current) => {
+    setSharedSettings((current) => {
       if (current.pattern === "wave") {
         return {
           ...current,
@@ -771,30 +870,36 @@ export default function HalftoneStudio() {
         periodicMax: DEFAULTS.periodicMax,
       };
     });
-  }, [settings.pattern, setImageMetrics, setSettings]);
+  }, [settings.pattern, setImageMetrics, setSharedSettings]);
 
-  const resetSelectedChannel = useCallback(() => {
+  const resetChannel = useCallback((channelId: ChannelId) => {
     const preset = CHANNEL_PRESETS.find(
-      (channel) => channel.id === selectedChannelId,
+      (channel) => channel.id === channelId,
     );
-    setSettings({
-      ...DEFAULTS,
-      ink: preset?.color ?? DEFAULTS.ink,
-      paper: settings.paper,
-    });
-    setImageMetrics({ ...DEFAULT_IMAGE_METRICS });
-    updateChannel(selectedChannelId, {
-      strength: 100,
-      offsetX: 0,
-      offsetY: 0,
-    });
-  }, [
-    selectedChannelId,
-    setImageMetrics,
-    setSettings,
-    settings.paper,
-    updateChannel,
-  ]);
+    setChannels((current) =>
+      current.map((channel) =>
+        channel.id === channelId
+          ? {
+              ...channel,
+              strength: 100,
+              offsetX: 0,
+              offsetY: 0,
+              settings: {
+                ...channel.settings,
+                dotShape: DEFAULTS.dotShape,
+                lattice: DEFAULTS.lattice,
+                cellSize: DEFAULTS.cellSize,
+                dotScale: DEFAULTS.dotScale,
+                contrast: DEFAULTS.contrast,
+                latticeAngle: DEFAULTS.latticeAngle,
+                invert: DEFAULTS.invert,
+                ink: preset?.color ?? DEFAULTS.ink,
+              },
+            }
+          : channel,
+      ),
+    );
+  }, []);
 
   const uploadImage = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -805,7 +910,7 @@ export default function HalftoneStudio() {
       try {
         const nextAsset = await loadSourceAsset(file);
         setSourceAsset(nextAsset);
-        setSettings((current) => ({ ...current, pattern: "image" }));
+        setSharedSettings((current) => ({ ...current, pattern: "image" }));
       } catch {
         setUploadError("图片读取失败，请换用 PNG、WebP 或 JPEG。");
       } finally {
@@ -813,7 +918,7 @@ export default function HalftoneStudio() {
         event.target.value = "";
       }
     },
-    [setSettings, setSourceAsset],
+    [setSharedSettings],
   );
 
   const exportPng = useCallback(async () => {
@@ -826,6 +931,8 @@ export default function HalftoneStudio() {
       exportSize.height,
       channels,
       settings.paper,
+      sourceAsset,
+      imageMetrics,
     );
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (blob) {
@@ -836,7 +943,15 @@ export default function HalftoneStudio() {
       );
     }
     setExporting(false);
-  }, [exportSize, settings.paper, settings.widthMm, settings.heightMm, channels]);
+  }, [
+    exportSize,
+    settings.paper,
+    settings.widthMm,
+    settings.heightMm,
+    channels,
+    sourceAsset,
+    imageMetrics,
+  ]);
 
   const exportSvg = useCallback(() => {
     const width = Math.round(settings.widthMm * 10);
@@ -849,8 +964,8 @@ export default function HalftoneStudio() {
           width,
           height,
           channel.settings,
-          channel.sourceAsset,
-          channel.imageMetrics,
+          sourceAsset,
+          imageMetrics,
           (x, y, radius) => {
             elements.push(svgDot(x, y, radius, channel.settings.dotShape));
           },
@@ -865,7 +980,14 @@ export default function HalftoneStudio() {
       new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
       `halftone-cmyk-${settings.widthMm}x${settings.heightMm}mm.svg`,
     );
-  }, [settings.widthMm, settings.heightMm, settings.paper, channels]);
+  }, [
+    settings.widthMm,
+    settings.heightMm,
+    settings.paper,
+    channels,
+    sourceAsset,
+    imageMetrics,
+  ]);
 
   if (view === "editor") {
     const isImageEditor = settings.pattern === "image";
@@ -874,7 +996,7 @@ export default function HalftoneStudio() {
         <header className="topbar editor-topbar">
           <div className="brand">
             <span className="brand-mark" aria-hidden="true" />
-            {selectedChannel.id} · {PATTERN_LABELS[settings.pattern]} / EDITOR
+            {PATTERN_LABELS[settings.pattern]} / SHARED SOURCE EDITOR
           </div>
           <span className="editor-step">
             02 / {isImageEditor ? "ALPHA SOURCE" : "SOURCE FIELD"}
@@ -957,7 +1079,7 @@ export default function HalftoneStudio() {
                       min={0.03}
                       max={0.5}
                       step={0.01}
-                      onChange={(value) => update("gaussianDeltaRatio", value)}
+                      onChange={(value) => updateShared("gaussianDeltaRatio", value)}
                     />
                     <MetricSlider
                       label="最小值"
@@ -966,7 +1088,7 @@ export default function HalftoneStudio() {
                       min={0}
                       max={100}
                       onChange={(value) =>
-                        update("periodicMin", Math.min(value, settings.periodicMax))
+                        updateShared("periodicMin", Math.min(value, settings.periodicMax))
                       }
                     />
                     <MetricSlider
@@ -976,7 +1098,7 @@ export default function HalftoneStudio() {
                       min={0}
                       max={100}
                       onChange={(value) =>
-                        update("periodicMax", Math.max(value, settings.periodicMin))
+                        updateShared("periodicMax", Math.max(value, settings.periodicMin))
                       }
                     />
                   </div>
@@ -994,19 +1116,19 @@ export default function HalftoneStudio() {
               )}
               {settings.pattern === "wave" && (
                 <>
-                  <MetricSlider label="波浪大小" value={settings.waveAmplitude} suffix="%" min={0} max={100} onChange={(value) => update("waveAmplitude", value)} />
-                  <MetricSlider label="波浪周期" value={settings.wavePeriod} suffix="" min={1} max={12} step={0.5} onChange={(value) => update("wavePeriod", value)} />
-                  <MetricSlider label="波浪方向" value={settings.waveDirection} suffix="°" min={-180} max={180} onChange={(value) => update("waveDirection", value)} />
+                  <MetricSlider label="波浪大小" value={settings.waveAmplitude} suffix="%" min={0} max={100} onChange={(value) => updateShared("waveAmplitude", value)} />
+                  <MetricSlider label="波浪周期" value={settings.wavePeriod} suffix="" min={1} max={12} step={0.5} onChange={(value) => updateShared("wavePeriod", value)} />
+                  <MetricSlider label="波浪方向" value={settings.waveDirection} suffix="°" min={-180} max={180} onChange={(value) => updateShared("waveDirection", value)} />
                 </>
               )}
               {settings.pattern === "linear" && (
-                <MetricSlider label="渐变方向" value={settings.gradientDirection} suffix="°" min={-180} max={180} onChange={(value) => update("gradientDirection", value)} />
+                <MetricSlider label="渐变方向" value={settings.gradientDirection} suffix="°" min={-180} max={180} onChange={(value) => updateShared("gradientDirection", value)} />
               )}
               {settings.pattern === "radial" && (
                 <>
-                  <MetricSlider label="椭圆形状" value={settings.radialRatio} suffix="×" min={0.4} max={2.5} step={0.1} onChange={(value) => update("radialRatio", value)} />
-                  <MetricSlider label="椭圆朝向" value={settings.radialAngle} suffix="°" min={0} max={180} onChange={(value) => update("radialAngle", value)} />
-                  <MetricSlider label="循环周期" value={settings.radialPeriod} suffix="" min={2} max={16} step={0.5} onChange={(value) => update("radialPeriod", value)} />
+                  <MetricSlider label="椭圆形状" value={settings.radialRatio} suffix="×" min={0.4} max={2.5} step={0.1} onChange={(value) => updateShared("radialRatio", value)} />
+                  <MetricSlider label="椭圆朝向" value={settings.radialAngle} suffix="°" min={0} max={180} onChange={(value) => updateShared("radialAngle", value)} />
+                  <MetricSlider label="循环周期" value={settings.radialPeriod} suffix="" min={2} max={16} step={0.5} onChange={(value) => updateShared("radialPeriod", value)} />
                 </>
               )}
             </div>
@@ -1227,6 +1349,31 @@ export default function HalftoneStudio() {
                         </span>
                         <strong>{channel.id}</strong>
                       </button>
+                      <ChannelPatternControls
+                        settings={channel.settings}
+                        update={(key, value) => {
+                          setChannels((current) =>
+                            current.map((item) =>
+                              item.id === channel.id
+                                ? {
+                                    ...item,
+                                    settings: {
+                                      ...item.settings,
+                                      [key]: value,
+                                    },
+                                  }
+                                : item,
+                            ),
+                          );
+                        }}
+                      />
+                      <button
+                        className="reset channel-reset"
+                        type="button"
+                        onClick={() => resetChannel(channel.id)}
+                      >
+                        恢复此通道默认参数
+                      </button>
                       <div className="channel-offsets">
                         <MetricSlider
                           label="原始 X 偏移"
@@ -1249,17 +1396,6 @@ export default function HalftoneStudio() {
                           }
                         />
                       </div>
-                      <button
-                        className="channel-edit-button"
-                        type="button"
-                        onClick={() => {
-                          setSelectedChannelId(channel.id);
-                          setView("editor");
-                        }}
-                      >
-                        <span>打开 {channel.id} 通道完整编辑器</span>
-                        <span aria-hidden="true">→</span>
-                      </button>
                     </>
                   );
                 })()}
@@ -1267,19 +1403,12 @@ export default function HalftoneStudio() {
             )}
           </section>
 
-          <div className="control-header">
-            <h2>{selectedChannel.id} 通道参数</h2>
-            <button className="reset" type="button" onClick={resetSelectedChannel}>
-              恢复默认
-            </button>
-          </div>
-
-          <section className="control-section">
-            <h3>图案结构</h3>
+          <section className="control-section global-source-section">
+            <h3>图案结构 · 所有通道共用</h3>
             <div className="control-grid">
               <label className="field">
                 <span className="field-label">生成模型</span>
-                <select value={settings.pattern} onChange={(event) => update("pattern", event.target.value as Pattern)}>
+                <select value={settings.pattern} onChange={(event) => updateShared("pattern", event.target.value as Pattern)}>
                   <option value="wave">流动波纹</option>
                   <option value="radial">径向脉冲</option>
                   <option value="linear">线性渐变</option>
@@ -1329,7 +1458,7 @@ export default function HalftoneStudio() {
                     suffix="%"
                     min={0}
                     max={100}
-                    onChange={(value) => update("waveAmplitude", value)}
+                    onChange={(value) => updateShared("waveAmplitude", value)}
                   />
                   <MetricSlider
                     label="波浪周期"
@@ -1338,7 +1467,7 @@ export default function HalftoneStudio() {
                     min={1}
                     max={12}
                     step={0.5}
-                    onChange={(value) => update("wavePeriod", value)}
+                    onChange={(value) => updateShared("wavePeriod", value)}
                   />
                   <MetricSlider
                     label="波浪方向"
@@ -1346,7 +1475,7 @@ export default function HalftoneStudio() {
                     suffix="°"
                     min={-180}
                     max={180}
-                    onChange={(value) => update("waveDirection", value)}
+                    onChange={(value) => updateShared("waveDirection", value)}
                   />
                 </div>
               )}
@@ -1359,7 +1488,7 @@ export default function HalftoneStudio() {
                     suffix="°"
                     min={-180}
                     max={180}
-                    onChange={(value) => update("gradientDirection", value)}
+                    onChange={(value) => updateShared("gradientDirection", value)}
                   />
                 </div>
               )}
@@ -1373,7 +1502,7 @@ export default function HalftoneStudio() {
                     min={0.4}
                     max={2.5}
                     step={0.1}
-                    onChange={(value) => update("radialRatio", value)}
+                    onChange={(value) => updateShared("radialRatio", value)}
                   />
                   <MetricSlider
                     label="椭圆朝向"
@@ -1381,7 +1510,7 @@ export default function HalftoneStudio() {
                     suffix="°"
                     min={0}
                     max={180}
-                    onChange={(value) => update("radialAngle", value)}
+                    onChange={(value) => updateShared("radialAngle", value)}
                   />
                   <MetricSlider
                     label="循环周期"
@@ -1390,7 +1519,7 @@ export default function HalftoneStudio() {
                     min={2}
                     max={16}
                     step={0.5}
-                    onChange={(value) => update("radialPeriod", value)}
+                    onChange={(value) => updateShared("radialPeriod", value)}
                   />
                 </div>
               )}
@@ -1408,55 +1537,6 @@ export default function HalftoneStudio() {
                 <span aria-hidden="true">→</span>
               </button>
 
-              <label className="field">
-                <span className="field-label">重复单元形状</span>
-                <select value={settings.dotShape} onChange={(event) => update("dotShape", event.target.value as DotShape)}>
-                  <option value="circle">圆形</option>
-                  <option value="square">正方形</option>
-                  <option value="hexagon">六边形</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span className="field-label">重复方向</span>
-                <select value={settings.lattice} onChange={(event) => update("lattice", event.target.value as Lattice)}>
-                  <option value="square">四方平移 · 0° / 90°</option>
-                  <option value="hexagonal">六角平移 · 0° / 60° / 120°</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span className="field-label">
-                  网格间距 <span className="field-value">{settings.cellSize.toFixed(1)} mm</span>
-                </span>
-                <input type="range" min="2" max="10" step=".1" value={settings.cellSize} onChange={(event) => update("cellSize", Number(event.target.value))} />
-              </label>
-
-              <label className="field">
-                <span className="field-label">
-                  网点大小 <span className="field-value">{settings.dotScale}%</span>
-                </span>
-                <input type="range" min="20" max="150" step="1" value={settings.dotScale} onChange={(event) => update("dotScale", Number(event.target.value))} />
-              </label>
-
-              <label className="field">
-                <span className="field-label">
-                  对比度 <span className="field-value">{settings.contrast}%</span>
-                </span>
-                <input type="range" min="20" max="100" step="1" value={settings.contrast} onChange={(event) => update("contrast", Number(event.target.value))} />
-              </label>
-
-              <label className="field">
-                <span className="field-label">
-                  重复方向角度 <span className="field-value">{settings.latticeAngle}°</span>
-                </span>
-                <input type="range" min="-180" max="180" step="1" value={settings.latticeAngle} onChange={(event) => update("latticeAngle", Number(event.target.value))} />
-              </label>
-
-              <div className="toggle-row">
-                反转明暗
-                <button className="switch" type="button" role="switch" aria-checked={settings.invert} aria-label="反转明暗" onClick={() => update("invert", !settings.invert)} />
-              </div>
             </div>
           </section>
 
@@ -1466,11 +1546,11 @@ export default function HalftoneStudio() {
               <div className="dimension-row">
                 <label className="small-label">
                   宽度 / mm
-                  <input type="number" min="30" max="400" value={settings.widthMm} onChange={(event) => update("widthMm", clamp(Number(event.target.value), 30, 400))} />
+                  <input type="number" min="30" max="400" value={settings.widthMm} onChange={(event) => updateShared("widthMm", clamp(Number(event.target.value), 30, 400))} />
                 </label>
                 <label className="small-label">
                   高度 / mm
-                  <input type="number" min="30" max="400" value={settings.heightMm} onChange={(event) => update("heightMm", clamp(Number(event.target.value), 30, 400))} />
+                  <input type="number" min="30" max="400" value={settings.heightMm} onChange={(event) => updateShared("heightMm", clamp(Number(event.target.value), 30, 400))} />
                 </label>
               </div>
               <div className="color-row">
@@ -1480,7 +1560,7 @@ export default function HalftoneStudio() {
                 </label>
                 <label className="small-label">
                   纸张
-                  <input className="color-control" type="color" value={settings.paper} onChange={(event) => update("paper", event.target.value)} />
+                  <input className="color-control" type="color" value={settings.paper} onChange={(event) => updateShared("paper", event.target.value)} />
                 </label>
               </div>
             </div>

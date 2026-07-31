@@ -218,8 +218,14 @@ canvas {
 }
 
 .channel-section {
+  order: -1;
   padding: 22px 24px;
   border-bottom: 1px solid var(--ink);
+}
+
+.global-source-section {
+  order: -2;
+  border-bottom-color: var(--ink);
 }
 
 .channel-section-head {
@@ -345,6 +351,13 @@ canvas {
 .channel-offsets {
   display: grid;
   gap: 16px;
+}
+
+.channel-pattern-controls {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
 }
 
 .control-header,
