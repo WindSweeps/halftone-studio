@@ -48,7 +48,8 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /NO HALFTONE DOTS/);
   assert.match(source, /if \(view === "editor"\)/);
   assert.match(source, /if \(view === "complete"\)/);
-  assert.match(source, /selectedChannel\.offsetX/);
+  assert.match(source, /gridOffsetX \/ 100/);
+  assert.match(source, /gridOffsetY \/ 100/);
   assert.match(source, /单周期渐变函数/);
   assert.match(source, /GAUSSIAN/);
   assert.match(source, /σ \/ T/);
@@ -61,8 +62,9 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /settings\.latticeAngle/);
   assert.doesNotMatch(source, /settings\.angle/);
   assert.match(source, /createDefaultChannels/);
-  assert.match(source, /原始 X 偏移/);
-  assert.match(source, /原始 Y 偏移/);
+  assert.match(source, /网格 X 偏移/);
+  assert.match(source, /网格 Y 偏移/);
+  assert.doesNotMatch(source, /x \/ width - sourceOffsetX/);
   assert.match(source, /激活通道/);
   assert.match(source, /drawCompositePattern/);
   assert.match(source, /mix-blend-mode:multiply/);

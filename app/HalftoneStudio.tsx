@@ -250,8 +250,8 @@ function forEachDot(
   asset: SourceAsset | null,
   imageMetrics: ImageMetrics,
   callback: (x: number, y: number, radius: number) => void,
-  sourceOffsetX = 0,
-  sourceOffsetY = 0,
+  gridOffsetX = 0,
+  gridOffsetY = 0,
 ) {
   const cellPx = Math.max(4, (settings.cellSize / settings.widthMm) * width);
   const rowStep =
@@ -267,8 +267,8 @@ function forEachDot(
       settings.lattice === "hexagonal" && Math.abs(row % 2) === 1 ? 0.5 : 0;
     for (let column = -columns; column <= columns; column += 1) {
       const latticePoint = rotatePoint(
-        (column + rowOffset) * cellPx,
-        row * rowStep,
+        (column + rowOffset + gridOffsetX / 100) * cellPx,
+        (row + gridOffsetY / 100) * rowStep,
         settings.latticeAngle,
       );
       const x = centerX + latticePoint.x;
@@ -282,8 +282,8 @@ function forEachDot(
         continue;
       }
       const tone = toneAt(
-        x / width - sourceOffsetX / 100,
-        y / height - sourceOffsetY / 100,
+        x / width,
+        y / height,
         settings,
         asset,
         imageMetrics,
@@ -380,8 +380,6 @@ function drawSourceField(
   settings: Settings,
   asset: SourceAsset | null,
   imageMetrics: ImageMetrics,
-  sourceOffsetX = 0,
-  sourceOffsetY = 0,
 ) {
   const width = 720;
   const height = 480;
@@ -394,8 +392,8 @@ function drawSourceField(
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const tone = toneAt(
-        (x + 0.5) / width - sourceOffsetX / 100,
-        (y + 0.5) / height - sourceOffsetY / 100,
+        (x + 0.5) / width,
+        (y + 0.5) / height,
         settings,
         asset,
         imageMetrics,
@@ -801,10 +799,8 @@ export default function HalftoneStudio() {
       settings,
       sourceAsset,
       imageMetrics,
-      selectedChannel.offsetX,
-      selectedChannel.offsetY,
     );
-  }, [view, settings, sourceAsset, imageMetrics, selectedChannel]);
+  }, [view, settings, sourceAsset, imageMetrics]);
 
   useEffect(() => {
     sourceAssetRef.current = sourceAsset;
@@ -1376,7 +1372,7 @@ export default function HalftoneStudio() {
                       </button>
                       <div className="channel-offsets">
                         <MetricSlider
-                          label="原始 X 偏移"
+                          label="网格 X 偏移"
                           value={channel.offsetX}
                           suffix="%"
                           min={-50}
@@ -1386,7 +1382,7 @@ export default function HalftoneStudio() {
                           }
                         />
                         <MetricSlider
-                          label="原始 Y 偏移"
+                          label="网格 Y 偏移"
                           value={channel.offsetY}
                           suffix="%"
                           min={-50}
