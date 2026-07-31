@@ -50,7 +50,7 @@ type Settings = {
 };
 
 const DEFAULTS: Settings = {
-  pattern: "wave",
+  pattern: "linear",
   dotShape: "circle",
   lattice: "square",
   cellSize: 4.2,
