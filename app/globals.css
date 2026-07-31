@@ -165,14 +165,21 @@ h1 {
 .canvas-frame {
   min-height: 460px;
   flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 32px;
   overflow: hidden;
   border: 1px solid var(--ink);
   background: #d6d2c8;
   box-shadow: 7px 7px 0 var(--ink);
   position: relative;
+}
+
+.canvas-stage {
+  position: absolute;
+  inset: 32px;
+  display: grid;
+  place-items: center;
+  container-type: size;
+  min-width: 0;
+  min-height: 0;
 }
 
 .canvas-frame::before,
@@ -196,10 +203,12 @@ h1 {
   border-top: 1px solid var(--ink);
 }
 
-canvas {
+.canvas-frame canvas {
   display: block;
-  width: min(100%, 980px);
-  max-height: calc(100vh - 250px);
+  width: min(100cqw, calc(100cqh * var(--art-ratio, 1.5)));
+  height: auto;
+  max-width: none;
+  max-height: none;
   aspect-ratio: var(--art-ratio, 1.5);
   object-fit: contain;
   background: white;
@@ -994,12 +1003,11 @@ input[type="range"] {
 
   .canvas-frame {
     min-height: 330px;
-    padding: 22px;
     box-shadow: 4px 4px 0 var(--ink);
   }
 
-  canvas {
-    max-height: none;
+  .canvas-stage {
+    inset: 22px;
   }
 
   .preview-foot {

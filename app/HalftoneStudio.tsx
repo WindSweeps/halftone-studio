@@ -1251,11 +1251,13 @@ export default function HalftoneStudio() {
           </div>
 
           <div className="canvas-frame">
-            <canvas
-              ref={canvasRef}
-              aria-label="实时半调图案预览"
-              style={{ "--art-ratio": settings.widthMm / settings.heightMm } as React.CSSProperties}
-            />
+            <div className="canvas-stage">
+              <canvas
+                ref={canvasRef}
+                aria-label="实时半调图案预览"
+                style={{ "--art-ratio": settings.widthMm / settings.heightMm } as React.CSSProperties}
+              />
+            </div>
           </div>
 
           <div className="preview-foot">
