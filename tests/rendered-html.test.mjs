@@ -23,6 +23,11 @@ test("server renders the halftone studio shell", async () => {
   assert.match(html, /六角平移/);
   assert.match(html, /上传自己的图片/);
   assert.match(html, /渐变方向/);
+  assert.match(html, /Cyan/);
+  assert.match(html, /Magenta/);
+  assert.match(html, /Yellow/);
+  assert.match(html, /Key/);
+  assert.match(html, /2<!-- --> \/ 4 ACTIVE/);
   assert.match(html, /开始编辑/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
@@ -45,7 +50,7 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /NO HALFTONE DOTS/);
   assert.match(source, /if \(view === "editor"\)/);
   assert.match(source, /if \(view === "complete"\)/);
-  assert.match(source, /\[view, settings, sourceAsset, imageMetrics\]/);
+  assert.match(source, /selectedChannel\.offsetX/);
   assert.match(source, /单周期渐变函数/);
   assert.match(source, /GAUSSIAN/);
   assert.match(source, /σ \/ T/);
@@ -57,4 +62,10 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /重复方向角度/);
   assert.match(source, /settings\.latticeAngle/);
   assert.doesNotMatch(source, /settings\.angle/);
+  assert.match(source, /createDefaultChannels/);
+  assert.match(source, /原始 X 偏移/);
+  assert.match(source, /原始 Y 偏移/);
+  assert.match(source, /激活通道/);
+  assert.match(source, /drawCompositePattern/);
+  assert.match(source, /mix-blend-mode:multiply/);
 });

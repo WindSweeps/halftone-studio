@@ -6,6 +6,7 @@ type Pattern = "wave" | "radial" | "linear" | "image";
 type DotShape = "circle" | "square" | "hexagon";
 type Lattice = "square" | "hexagonal";
 type View = "studio" | "editor" | "complete";
+type ChannelId = "C" | "M" | "Y" | "K";
 
 type SourceAsset = {
   name: string;
@@ -49,6 +50,18 @@ type Settings = {
   periodicMax: number;
 };
 
+type ChannelState = {
+  id: ChannelId;
+  name: string;
+  active: boolean;
+  strength: number;
+  offsetX: number;
+  offsetY: number;
+  settings: Settings;
+  imageMetrics: ImageMetrics;
+  sourceAsset: SourceAsset | null;
+};
+
 const DEFAULTS: Settings = {
   pattern: "linear",
   dotShape: "circle",
@@ -82,6 +95,32 @@ const DEFAULT_IMAGE_METRICS: ImageMetrics = {
   offsetX: 0,
   offsetY: 0,
 };
+
+const CHANNEL_PRESETS: Array<{
+  id: ChannelId;
+  name: string;
+  color: string;
+  active: boolean;
+}> = [
+  { id: "C", name: "Cyan", color: "#00aee8", active: true },
+  { id: "M", name: "Magenta", color: "#ec168c", active: true },
+  { id: "Y", name: "Yellow", color: "#ffd400", active: false },
+  { id: "K", name: "Key", color: "#191919", active: false },
+];
+
+function createDefaultChannels(): ChannelState[] {
+  return CHANNEL_PRESETS.map((preset) => ({
+    id: preset.id,
+    name: preset.name,
+    active: preset.active,
+    strength: 100,
+    offsetX: 0,
+    offsetY: 0,
+    settings: { ...DEFAULTS, ink: preset.color },
+    imageMetrics: { ...DEFAULT_IMAGE_METRICS },
+    sourceAsset: null,
+  }));
+}
 
 const PPI = 300;
 const PX_PER_MM = PPI / 25.4;
@@ -215,6 +254,8 @@ function forEachDot(
   asset: SourceAsset | null,
   imageMetrics: ImageMetrics,
   callback: (x: number, y: number, radius: number) => void,
+  sourceOffsetX = 0,
+  sourceOffsetY = 0,
 ) {
   const cellPx = Math.max(4, (settings.cellSize / settings.widthMm) * width);
   const rowStep =
@@ -245,8 +286,8 @@ function forEachDot(
         continue;
       }
       const tone = toneAt(
-        x / width,
-        y / height,
+        x / width - sourceOffsetX / 100,
+        y / height - sourceOffsetY / 100,
         settings,
         asset,
         imageMetrics,
@@ -296,27 +337,44 @@ function traceDot(
   context.closePath();
 }
 
-function drawPattern(
+function drawCompositePattern(
   canvas: HTMLCanvasElement,
   width: number,
   height: number,
-  settings: Settings,
-  asset: SourceAsset | null,
-  imageMetrics: ImageMetrics,
+  channels: ChannelState[],
+  paper: string,
 ) {
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) return;
 
-  context.fillStyle = settings.paper;
+  context.fillStyle = paper;
   context.fillRect(0, 0, width, height);
-  context.fillStyle = settings.ink;
-  context.beginPath();
-  forEachDot(width, height, settings, asset, imageMetrics, (x, y, radius) => {
-    traceDot(context, x, y, radius, settings.dotShape);
-  });
-  context.fill();
+  context.globalCompositeOperation = "multiply";
+
+  for (const channel of channels) {
+    if (!channel.active || channel.strength <= 0) continue;
+    context.globalAlpha = channel.strength / 100;
+    context.fillStyle = channel.settings.ink;
+    context.beginPath();
+    forEachDot(
+      width,
+      height,
+      channel.settings,
+      channel.sourceAsset,
+      channel.imageMetrics,
+      (x, y, radius) => {
+        traceDot(context, x, y, radius, channel.settings.dotShape);
+      },
+      channel.offsetX,
+      channel.offsetY,
+    );
+    context.fill();
+  }
+
+  context.globalAlpha = 1;
+  context.globalCompositeOperation = "source-over";
 }
 
 function drawSourceField(
@@ -324,6 +382,8 @@ function drawSourceField(
   settings: Settings,
   asset: SourceAsset | null,
   imageMetrics: ImageMetrics,
+  sourceOffsetX = 0,
+  sourceOffsetY = 0,
 ) {
   const width = 720;
   const height = 480;
@@ -336,8 +396,8 @@ function drawSourceField(
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const tone = toneAt(
-        (x + 0.5) / width,
-        (y + 0.5) / height,
+        (x + 0.5) / width - sourceOffsetX / 100,
+        (y + 0.5) / height - sourceOffsetY / 100,
         settings,
         asset,
         imageMetrics,
@@ -529,15 +589,88 @@ function GaussianProfileChart({
 export default function HalftoneStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [settings, setSettings] = useState<Settings>(DEFAULTS);
+  const [channels, setChannels] = useState<ChannelState[]>(createDefaultChannels);
+  const [selectedChannelId, setSelectedChannelId] = useState<ChannelId>("C");
+  const [expandedChannelId, setExpandedChannelId] =
+    useState<ChannelId | null>(null);
   const [view, setView] = useState<View>("studio");
-  const [sourceAsset, setSourceAsset] = useState<SourceAsset | null>(null);
-  const [imageMetrics, setImageMetrics] = useState<ImageMetrics>(
-    DEFAULT_IMAGE_METRICS,
-  );
   const [uploadError, setUploadError] = useState("");
   const [loadingImage, setLoadingImage] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const channelsRef = useRef(channels);
+  const selectedChannel =
+    channels.find((channel) => channel.id === selectedChannelId) ?? channels[0];
+  const settings = selectedChannel.settings;
+  const sourceAsset = selectedChannel.sourceAsset;
+  const imageMetrics = selectedChannel.imageMetrics;
+
+  const setSettings = useCallback(
+    (next: React.SetStateAction<Settings>) => {
+      setChannels((current) =>
+        current.map((channel) =>
+          channel.id === selectedChannelId
+            ? {
+                ...channel,
+                settings:
+                  typeof next === "function"
+                    ? next(channel.settings)
+                    : next,
+              }
+            : channel,
+        ),
+      );
+    },
+    [selectedChannelId],
+  );
+
+  const setImageMetrics = useCallback(
+    (next: React.SetStateAction<ImageMetrics>) => {
+      setChannels((current) =>
+        current.map((channel) =>
+          channel.id === selectedChannelId
+            ? {
+                ...channel,
+                imageMetrics:
+                  typeof next === "function"
+                    ? next(channel.imageMetrics)
+                    : next,
+              }
+            : channel,
+        ),
+      );
+    },
+    [selectedChannelId],
+  );
+
+  const setSourceAsset = useCallback(
+    (source: SourceAsset | null) => {
+      setChannels((current) =>
+        current.map((channel) =>
+          channel.id === selectedChannelId
+            ? { ...channel, sourceAsset: source }
+            : channel,
+        ),
+      );
+    },
+    [selectedChannelId],
+  );
+
+  const updateChannel = useCallback(
+    (
+      channelId: ChannelId,
+      changes: Partial<
+        Pick<ChannelState, "active" | "strength" | "offsetX" | "offsetY">
+      >,
+    ) => {
+      setChannels((current) =>
+        current.map((channel) =>
+          channel.id === channelId ? { ...channel, ...changes } : channel,
+        ),
+      );
+    },
+    [],
+  );
+
   const isPeriodicPattern =
     settings.pattern === "wave" || settings.pattern === "radial";
 
@@ -558,38 +691,50 @@ export default function HalftoneStudio() {
     if (!canvas) return;
     const previewWidth = 1100;
     const previewHeight = Math.round(previewWidth * (settings.heightMm / settings.widthMm));
-    drawPattern(
+    drawCompositePattern(
       canvas,
       previewWidth,
       previewHeight,
-      settings,
-      sourceAsset,
-      imageMetrics,
+      channels,
+      settings.paper,
     );
-  }, [view, settings, sourceAsset, imageMetrics]);
+  }, [view, channels, settings.heightMm, settings.widthMm, settings.paper]);
 
   useEffect(() => {
     if (view !== "editor" || settings.pattern === "image") return;
     const canvas = sourceCanvasRef.current;
     if (!canvas) return;
-    drawSourceField(canvas, settings, sourceAsset, imageMetrics);
-  }, [view, settings, sourceAsset, imageMetrics]);
+    drawSourceField(
+      canvas,
+      settings,
+      sourceAsset,
+      imageMetrics,
+      selectedChannel.offsetX,
+      selectedChannel.offsetY,
+    );
+  }, [view, settings, sourceAsset, imageMetrics, selectedChannel]);
+
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
 
   useEffect(() => {
     return () => {
-      if (sourceAsset) URL.revokeObjectURL(sourceAsset.url);
+      for (const channel of channelsRef.current) {
+        if (channel.sourceAsset) URL.revokeObjectURL(channel.sourceAsset.url);
+      }
     };
-  }, [sourceAsset]);
+  }, []);
 
   const update = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }));
-  }, []);
+  }, [setSettings]);
 
   const updateImageMetric = useCallback(
     <K extends keyof ImageMetrics>(key: K, value: ImageMetrics[K]) => {
       setImageMetrics((current) => ({ ...current, [key]: value }));
     },
-    [],
+    [setImageMetrics],
   );
 
   const resetCurrentModel = useCallback(() => {
@@ -626,7 +771,30 @@ export default function HalftoneStudio() {
         periodicMax: DEFAULTS.periodicMax,
       };
     });
-  }, [settings.pattern]);
+  }, [settings.pattern, setImageMetrics, setSettings]);
+
+  const resetSelectedChannel = useCallback(() => {
+    const preset = CHANNEL_PRESETS.find(
+      (channel) => channel.id === selectedChannelId,
+    );
+    setSettings({
+      ...DEFAULTS,
+      ink: preset?.color ?? DEFAULTS.ink,
+      paper: settings.paper,
+    });
+    setImageMetrics({ ...DEFAULT_IMAGE_METRICS });
+    updateChannel(selectedChannelId, {
+      strength: 100,
+      offsetX: 0,
+      offsetY: 0,
+    });
+  }, [
+    selectedChannelId,
+    setImageMetrics,
+    setSettings,
+    settings.paper,
+    updateChannel,
+  ]);
 
   const uploadImage = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -645,20 +813,19 @@ export default function HalftoneStudio() {
         event.target.value = "";
       }
     },
-    [],
+    [setSettings, setSourceAsset],
   );
 
   const exportPng = useCallback(async () => {
     setExporting(true);
     await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
     const canvas = document.createElement("canvas");
-    drawPattern(
+    drawCompositePattern(
       canvas,
       exportSize.width,
       exportSize.height,
-      settings,
-      sourceAsset,
-      imageMetrics,
+      channels,
+      settings.paper,
     );
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (blob) {
@@ -669,28 +836,36 @@ export default function HalftoneStudio() {
       );
     }
     setExporting(false);
-  }, [exportSize, settings, sourceAsset, imageMetrics]);
+  }, [exportSize, settings.paper, settings.widthMm, settings.heightMm, channels]);
 
   const exportSvg = useCallback(() => {
     const width = Math.round(settings.widthMm * 10);
     const height = Math.round(settings.heightMm * 10);
-    const elements: string[] = [];
-    forEachDot(
-      width,
-      height,
-      settings,
-      sourceAsset,
-      imageMetrics,
-      (x, y, radius) => {
-        elements.push(svgDot(x, y, radius, settings.dotShape));
-      },
-    );
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${settings.widthMm}mm" height="${settings.heightMm}mm" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${escapeXml(settings.paper)}"/><g fill="${escapeXml(settings.ink)}">${elements.join("")}</g></svg>`;
+    const groups = channels
+      .filter((channel) => channel.active && channel.strength > 0)
+      .map((channel) => {
+        const elements: string[] = [];
+        forEachDot(
+          width,
+          height,
+          channel.settings,
+          channel.sourceAsset,
+          channel.imageMetrics,
+          (x, y, radius) => {
+            elements.push(svgDot(x, y, radius, channel.settings.dotShape));
+          },
+          channel.offsetX,
+          channel.offsetY,
+        );
+        return `<g data-channel="${channel.id}" fill="${escapeXml(channel.settings.ink)}" opacity="${channel.strength / 100}" style="mix-blend-mode:multiply">${elements.join("")}</g>`;
+      })
+      .join("");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${settings.widthMm}mm" height="${settings.heightMm}mm" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${escapeXml(settings.paper)}"/>${groups}</svg>`;
     downloadBlob(
       new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
-      `halftone-${settings.dotShape}-${settings.lattice}-${settings.widthMm}x${settings.heightMm}mm.svg`,
+      `halftone-cmyk-${settings.widthMm}x${settings.heightMm}mm.svg`,
     );
-  }, [settings, sourceAsset, imageMetrics]);
+  }, [settings.widthMm, settings.heightMm, settings.paper, channels]);
 
   if (view === "editor") {
     const isImageEditor = settings.pattern === "image";
@@ -699,7 +874,7 @@ export default function HalftoneStudio() {
         <header className="topbar editor-topbar">
           <div className="brand">
             <span className="brand-mark" aria-hidden="true" />
-            {PATTERN_LABELS[settings.pattern]} / EDITOR
+            {selectedChannel.id} · {PATTERN_LABELS[settings.pattern]} / EDITOR
           </div>
           <span className="editor-step">
             02 / {isImageEditor ? "ALPHA SOURCE" : "SOURCE FIELD"}
@@ -883,15 +1058,19 @@ export default function HalftoneStudio() {
           <div className="complete-mark" aria-hidden="true">
             ✓
           </div>
-          <h1 id="complete-title">{PATTERN_LABELS[settings.pattern]}已经准备好。</h1>
+          <h1 id="complete-title">
+            {selectedChannel.id} 通道已经准备好。
+          </h1>
           <p>
             当前模型参数已经保存。返回生成器后，实时预览、PNG 与 SVG
             都会使用这组设置。
           </p>
           <dl className="complete-summary">
             <div>
-              <dt>生成模型</dt>
-              <dd>{PATTERN_LABELS[settings.pattern]}</dd>
+              <dt>通道 / 模型</dt>
+              <dd>
+                {selectedChannel.id} · {PATTERN_LABELS[settings.pattern]}
+              </dd>
             </div>
             <div>
               <dt>{isImageComplete ? "文件" : "重复单元"}</dt>
@@ -968,9 +1147,129 @@ export default function HalftoneStudio() {
         </section>
 
         <aside className="control-panel" aria-label="图案控制">
+          <section className="channel-section" aria-labelledby="channel-title">
+            <div className="channel-section-head">
+              <h2 id="channel-title">通道</h2>
+              <span>{channels.filter((channel) => channel.active).length} / 4 ACTIVE</span>
+            </div>
+            <div className="channel-grid">
+              {channels.map((channel) => {
+                const isSelected = channel.id === selectedChannelId;
+                return (
+                  <div
+                    className={`channel-card${channel.active ? " is-active" : ""}${isSelected ? " is-selected" : ""}`}
+                    key={channel.id}
+                    style={
+                      {
+                        "--channel-color": channel.settings.ink,
+                        "--channel-foreground":
+                          channel.id === "Y" ? "#151513" : "#ffffff",
+                      } as React.CSSProperties
+                    }
+                  >
+                    <button
+                      className="channel-card-open"
+                      type="button"
+                      aria-expanded={expandedChannelId === channel.id}
+                      onClick={() => {
+                        setSelectedChannelId(channel.id);
+                        setExpandedChannelId((current) =>
+                          current === channel.id ? null : channel.id,
+                        );
+                        setUploadError("");
+                      }}
+                    >
+                      <strong>{channel.id}</strong>
+                      <span>{channel.name}</span>
+                    </button>
+                    <label className="channel-strength">
+                      <span>{channel.strength}%</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={channel.strength}
+                        aria-label={`${channel.id} 通道强度`}
+                        onChange={(event) =>
+                          updateChannel(channel.id, {
+                            strength: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            {expandedChannelId && (
+              <div className="channel-dropdown">
+                {(() => {
+                  const channel =
+                    channels.find((item) => item.id === expandedChannelId) ??
+                    selectedChannel;
+                  return (
+                    <>
+                      <button
+                        className={`channel-activation${channel.active ? " is-active" : ""}`}
+                        type="button"
+                        onClick={() => {
+                          updateChannel(channel.id, {
+                            active: !channel.active,
+                          });
+                          setSelectedChannelId(channel.id);
+                          setExpandedChannelId(null);
+                        }}
+                      >
+                        <span>
+                          {channel.active ? "停用通道" : "激活通道"}
+                        </span>
+                        <strong>{channel.id}</strong>
+                      </button>
+                      <div className="channel-offsets">
+                        <MetricSlider
+                          label="原始 X 偏移"
+                          value={channel.offsetX}
+                          suffix="%"
+                          min={-50}
+                          max={50}
+                          onChange={(value) =>
+                            updateChannel(channel.id, { offsetX: value })
+                          }
+                        />
+                        <MetricSlider
+                          label="原始 Y 偏移"
+                          value={channel.offsetY}
+                          suffix="%"
+                          min={-50}
+                          max={50}
+                          onChange={(value) =>
+                            updateChannel(channel.id, { offsetY: value })
+                          }
+                        />
+                      </div>
+                      <button
+                        className="channel-edit-button"
+                        type="button"
+                        onClick={() => {
+                          setSelectedChannelId(channel.id);
+                          setView("editor");
+                        }}
+                      >
+                        <span>打开 {channel.id} 通道完整编辑器</span>
+                        <span aria-hidden="true">→</span>
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+          </section>
+
           <div className="control-header">
-            <h2>参数控制</h2>
-            <button className="reset" type="button" onClick={() => setSettings(DEFAULTS)}>
+            <h2>{selectedChannel.id} 通道参数</h2>
+            <button className="reset" type="button" onClick={resetSelectedChannel}>
               恢复默认
             </button>
           </div>
