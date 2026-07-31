@@ -52,4 +52,8 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /periodicGaussian/);
   assert.match(source, /periodOffset = -4/);
   assert.match(source, /max="150".*settings\.dotScale/);
+  assert.match(source, /latticeAngle: 0/);
+  assert.match(source, /重复方向角度/);
+  assert.match(source, /settings\.latticeAngle/);
+  assert.doesNotMatch(source, /settings\.angle/);
 });

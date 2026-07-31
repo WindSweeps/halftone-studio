@@ -31,7 +31,7 @@ type Settings = {
   cellSize: number;
   dotScale: number;
   contrast: number;
-  angle: number;
+  latticeAngle: number;
   widthMm: number;
   heightMm: number;
   ink: string;
@@ -56,7 +56,7 @@ const DEFAULTS: Settings = {
   cellSize: 4.2,
   dotScale: 88,
   contrast: 82,
-  angle: -18,
+  latticeAngle: 0,
   widthMm: 180,
   heightMm: 120,
   ink: "#151513",
@@ -169,15 +169,12 @@ function toneAt(
   asset: SourceAsset | null,
   imageMetrics: ImageMetrics,
 ) {
-  const radians = (settings.angle * Math.PI) / 180;
   const dx = x - 0.5;
   const dy = y - 0.5;
-  const rx = dx * Math.cos(radians) - dy * Math.sin(radians);
-  const ry = dx * Math.sin(radians) + dy * Math.cos(radians);
   let value = 0;
 
   if (settings.pattern === "radial") {
-    const radial = rotatePoint(rx, ry, settings.radialAngle);
+    const radial = rotatePoint(dx, dy, settings.radialAngle);
     const ellipticalDistance = Math.hypot(
       radial.x / settings.radialRatio,
       radial.y * settings.radialRatio,
@@ -189,12 +186,12 @@ function toneAt(
       settings.periodicMax,
     );
   } else if (settings.pattern === "linear") {
-    const gradient = rotatePoint(rx, ry, settings.gradientDirection);
+    const gradient = rotatePoint(dx, dy, settings.gradientDirection);
     value = clamp(gradient.x + 0.5, 0, 1);
   } else if (settings.pattern === "image") {
     value = imageToneAt(x, y, asset, imageMetrics);
   } else {
-    const wave = rotatePoint(rx, ry, settings.waveDirection);
+    const wave = rotatePoint(dx, dy, settings.waveDirection);
     const waveAmplitude = (settings.waveAmplitude / 100) * 0.75;
     const phase =
       wave.x * settings.wavePeriod +
@@ -222,15 +219,31 @@ function forEachDot(
   const cellPx = Math.max(4, (settings.cellSize / settings.widthMm) * width);
   const rowStep =
     settings.lattice === "hexagonal" ? cellPx * (Math.sqrt(3) / 2) : cellPx;
-  const columns = Math.ceil(width / cellPx) + 1;
-  const rows = Math.ceil(height / rowStep) + 1;
+  const span = Math.hypot(width, height) + cellPx * 4;
+  const columns = Math.ceil(span / cellPx);
+  const rows = Math.ceil(span / rowStep);
+  const centerX = width / 2;
+  const centerY = height / 2;
 
-  for (let row = -1; row < rows; row += 1) {
+  for (let row = -rows; row <= rows; row += 1) {
     const rowOffset =
       settings.lattice === "hexagonal" && Math.abs(row % 2) === 1 ? 0.5 : 0;
-    for (let column = -1; column < columns; column += 1) {
-      const x = (column + 0.5 + rowOffset) * cellPx;
-      const y = (row + 0.5) * rowStep;
+    for (let column = -columns; column <= columns; column += 1) {
+      const latticePoint = rotatePoint(
+        (column + rowOffset) * cellPx,
+        row * rowStep,
+        settings.latticeAngle,
+      );
+      const x = centerX + latticePoint.x;
+      const y = centerY + latticePoint.y;
+      if (
+        x < -cellPx ||
+        x > width + cellPx ||
+        y < -cellPx ||
+        y > height + cellPx
+      ) {
+        continue;
+      }
       const tone = toneAt(
         x / width,
         y / height,
@@ -1136,9 +1149,9 @@ export default function HalftoneStudio() {
 
               <label className="field">
                 <span className="field-label">
-                  网屏角度 <span className="field-value">{settings.angle}°</span>
+                  重复方向角度 <span className="field-value">{settings.latticeAngle}°</span>
                 </span>
-                <input type="range" min="-45" max="45" step="1" value={settings.angle} onChange={(event) => update("angle", Number(event.target.value))} />
+                <input type="range" min="-180" max="180" step="1" value={settings.latticeAngle} onChange={(event) => update("latticeAngle", Number(event.target.value))} />
               </label>
 
               <div className="toggle-row">
