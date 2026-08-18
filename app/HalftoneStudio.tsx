@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 type Pattern = "wave" | "radial" | "linear" | "image";
 type DotShape = "circle" | "square" | "hexagon";
 type Lattice = "square" | "hexagonal";
+type Material = "smooth" | "mottled";
 type View = "studio" | "editor" | "complete";
 type ChannelId = "C" | "M" | "Y" | "K";
 
@@ -57,6 +58,8 @@ type ChannelState = {
   strength: number;
   offsetX: number;
   offsetY: number;
+  material: Material;
+  materialAmount: number;
   settings: Settings;
 };
 
@@ -114,6 +117,8 @@ function createDefaultChannels(): ChannelState[] {
     strength: 100,
     offsetX: 0,
     offsetY: 0,
+    material: "smooth",
+    materialAmount: 45,
     settings: { ...DEFAULTS, ink: preset.color },
   }));
 }
@@ -252,6 +257,9 @@ function forEachDot(
   callback: (x: number, y: number, radius: number) => void,
   gridOffsetX = 0,
   gridOffsetY = 0,
+  material: Material = "smooth",
+  materialAmount = 45,
+  materialSeed = 0,
 ) {
   const cellPx = Math.max(4, (settings.cellSize / settings.widthMm) * width);
   const rowStep =
@@ -288,10 +296,22 @@ function forEachDot(
         asset,
         imageMetrics,
       );
-      const radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
+      let radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
+      if (material === "mottled") {
+        const amount = clamp(materialAmount / 100, 0, 1);
+        const dropoutNoise = latticeNoise(column, row, materialSeed);
+        if (dropoutNoise < amount * 0.16) continue;
+        const wearNoise = latticeNoise(column + 41, row - 73, materialSeed + 19);
+        radius *= 1 - amount * (0.12 + wearNoise * 0.48);
+      }
       callback(x, y, radius);
     }
   }
+}
+
+function latticeNoise(x: number, y: number, seed: number) {
+  const value = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function polygonPoints(
@@ -367,6 +387,9 @@ function drawCompositePattern(
       },
       channel.offsetX,
       channel.offsetY,
+      channel.material,
+      channel.materialAmount,
+      channel.id.charCodeAt(0),
     );
     context.fill();
   }
@@ -739,7 +762,15 @@ export default function HalftoneStudio() {
     (
       channelId: ChannelId,
       changes: Partial<
-        Pick<ChannelState, "active" | "strength" | "offsetX" | "offsetY">
+        Pick<
+          ChannelState,
+          | "active"
+          | "strength"
+          | "offsetX"
+          | "offsetY"
+          | "material"
+          | "materialAmount"
+        >
       >,
     ) => {
       setChannels((current) =>
@@ -880,6 +911,8 @@ export default function HalftoneStudio() {
               strength: 100,
               offsetX: 0,
               offsetY: 0,
+              material: "smooth",
+              materialAmount: 45,
               settings: {
                 ...channel.settings,
                 dotShape: DEFAULTS.dotShape,
@@ -967,6 +1000,9 @@ export default function HalftoneStudio() {
           },
           channel.offsetX,
           channel.offsetY,
+          channel.material,
+          channel.materialAmount,
+          channel.id.charCodeAt(0),
         );
         return `<g data-channel="${channel.id}" fill="${escapeXml(channel.settings.ink)}" opacity="${channel.strength / 100}" style="mix-blend-mode:multiply">${elements.join("")}</g>`;
       })
@@ -1365,6 +1401,41 @@ export default function HalftoneStudio() {
                           );
                         }}
                       />
+                      <div className="channel-material-controls">
+                        <label className="field">
+                          <span className="field-label">通道材质</span>
+                          <select
+                            value={channel.material}
+                            onChange={(event) =>
+                              updateChannel(channel.id, {
+                                material: event.target.value as Material,
+                              })
+                            }
+                          >
+                            <option value="smooth">平滑矢量</option>
+                            <option value="mottled">印刷斑驳</option>
+                          </select>
+                        </label>
+                        {channel.material === "mottled" && (
+                          <>
+                            <MetricSlider
+                              label="斑驳程度"
+                              value={channel.materialAmount}
+                              suffix="%"
+                              min={0}
+                              max={100}
+                              onChange={(value) =>
+                                updateChannel(channel.id, {
+                                  materialAmount: value,
+                                })
+                              }
+                            />
+                            <p className="material-note">
+                              模拟油墨缺失与网点磨损；预览和导出保持一致。
+                            </p>
+                          </>
+                        )}
+                      </div>
                       <button
                         className="reset channel-reset"
                         type="button"

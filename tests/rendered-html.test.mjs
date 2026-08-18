@@ -73,6 +73,13 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /重复单元形状/);
   assert.match(source, /六角平移/);
   assert.match(source, /setSharedSettings/);
+  assert.match(source, /通道材质/);
+  assert.match(source, /平滑矢量/);
+  assert.match(source, /印刷斑驳/);
+  assert.match(source, /斑驳程度/);
+  assert.match(source, /function latticeNoise/);
+  assert.match(source, /dropoutNoise < amount \* 0\.16/);
+  assert.match(source, /channel\.materialAmount/);
   assert.doesNotMatch(source, /channel\.sourceAsset/);
   assert.doesNotMatch(source, /channel\.imageMetrics/);
 });

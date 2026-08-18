@@ -376,6 +376,20 @@ h1 {
   border-bottom: 1px solid var(--line);
 }
 
+.channel-material-controls {
+  display: grid;
+  gap: 18px;
+  padding: 2px 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.material-note {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 .control-header,
 .control-section,
 .export-section {
