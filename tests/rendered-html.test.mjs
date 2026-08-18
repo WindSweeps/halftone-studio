@@ -78,7 +78,10 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /印刷斑驳/);
   assert.match(source, /斑驳程度/);
   assert.match(source, /function latticeNoise/);
-  assert.match(source, /dropoutNoise < amount \* 0\.16/);
+  assert.match(source, /function materialHoles/);
+  assert.match(source, /edgeChip = index % 3 === 0/);
+  assert.match(source, /context\.fill\("evenodd"\)/);
+  assert.match(source, /fill-rule="evenodd"/);
   assert.match(source, /channel\.materialAmount/);
   assert.doesNotMatch(source, /channel\.sourceAsset/);
   assert.doesNotMatch(source, /channel\.imageMetrics/);

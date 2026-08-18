@@ -254,7 +254,7 @@ function forEachDot(
   settings: Settings,
   asset: SourceAsset | null,
   imageMetrics: ImageMetrics,
-  callback: (x: number, y: number, radius: number) => void,
+  callback: (x: number, y: number, radius: number, textureSeed: number) => void,
   gridOffsetX = 0,
   gridOffsetY = 0,
   material: Material = "smooth",
@@ -296,15 +296,12 @@ function forEachDot(
         asset,
         imageMetrics,
       );
-      let radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
-      if (material === "mottled") {
-        const amount = clamp(materialAmount / 100, 0, 1);
-        const dropoutNoise = latticeNoise(column, row, materialSeed);
-        if (dropoutNoise < amount * 0.16) continue;
-        const wearNoise = latticeNoise(column + 41, row - 73, materialSeed + 19);
-        radius *= 1 - amount * (0.12 + wearNoise * 0.48);
-      }
-      callback(x, y, radius);
+      const radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
+      const textureSeed =
+        material === "mottled"
+          ? materialSeed + column * 31.7 + row * 91.3 + materialAmount * 0.17
+          : 0;
+      callback(x, y, radius, textureSeed);
     }
   }
 }
@@ -312,6 +309,37 @@ function forEachDot(
 function latticeNoise(x: number, y: number, seed: number) {
   const value = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
   return value - Math.floor(value);
+}
+
+type MaterialHole = { x: number; y: number; radius: number };
+
+function materialHoles(
+  x: number,
+  y: number,
+  radius: number,
+  amountPercent: number,
+  seed: number,
+): MaterialHole[] {
+  const amount = clamp(amountPercent / 100, 0, 1);
+  if (amount <= 0 || radius <= 0.2) return [];
+  const count = Math.max(1, Math.ceil(amount * 8));
+
+  return Array.from({ length: count }, (_, index) => {
+    const angle = latticeNoise(index, 17, seed) * Math.PI * 2;
+    const positionNoise = latticeNoise(index, 43, seed + 7);
+    const edgeChip = index % 3 === 0;
+    const distance = edgeChip
+      ? radius * (0.82 + positionNoise * 0.28)
+      : radius * (0.12 + positionNoise * 0.68);
+    const sizeNoise = latticeNoise(index, 79, seed + 23);
+    const holeRadius =
+      radius * (0.035 + sizeNoise * 0.12) * (0.45 + amount * 0.9);
+    return {
+      x: x + Math.cos(angle) * distance,
+      y: y + Math.sin(angle) * distance,
+      radius: Math.max(0.08, holeRadius),
+    };
+  });
 }
 
 function polygonPoints(
@@ -353,6 +381,16 @@ function traceDot(
   context.closePath();
 }
 
+function traceMaterialHoles(
+  context: CanvasRenderingContext2D,
+  holes: MaterialHole[],
+) {
+  for (const hole of holes) {
+    context.moveTo(hole.x + hole.radius, hole.y);
+    context.arc(hole.x, hole.y, hole.radius, 0, Math.PI * 2);
+  }
+}
+
 function drawCompositePattern(
   canvas: HTMLCanvasElement,
   width: number,
@@ -375,14 +413,30 @@ function drawCompositePattern(
     if (!channel.active || channel.strength <= 0) continue;
     context.globalAlpha = channel.strength / 100;
     context.fillStyle = channel.settings.ink;
-    context.beginPath();
+    if (channel.material === "smooth") context.beginPath();
     forEachDot(
       width,
       height,
       channel.settings,
       sourceAsset,
       imageMetrics,
-      (x, y, radius) => {
+      (x, y, radius, textureSeed) => {
+        if (channel.material === "mottled") {
+          context.beginPath();
+          traceDot(context, x, y, radius, channel.settings.dotShape);
+          traceMaterialHoles(
+            context,
+            materialHoles(
+              x,
+              y,
+              radius,
+              channel.materialAmount,
+              textureSeed,
+            ),
+          );
+          context.fill("evenodd");
+          return;
+        }
         traceDot(context, x, y, radius, channel.settings.dotShape);
       },
       channel.offsetX,
@@ -391,7 +445,7 @@ function drawCompositePattern(
       channel.materialAmount,
       channel.id.charCodeAt(0),
     );
-    context.fill();
+    if (channel.material === "smooth") context.fill();
   }
 
   context.globalAlpha = 1;
@@ -476,17 +530,43 @@ function escapeXml(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 }
 
-function svgDot(x: number, y: number, radius: number, shape: DotShape) {
-  if (shape === "circle") {
-    return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}"/>`;
-  }
+function svgCirclePath(x: number, y: number, radius: number) {
+  return `M ${(x + radius).toFixed(2)} ${y.toFixed(2)} A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 1 0 ${(x - radius).toFixed(2)} ${y.toFixed(2)} A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 1 0 ${(x + radius).toFixed(2)} ${y.toFixed(2)} Z`;
+}
 
+function svgDotPath(x: number, y: number, radius: number, shape: DotShape) {
+  if (shape === "circle") return svgCirclePath(x, y, radius);
   const sides = shape === "square" ? 4 : 6;
   const rotation = shape === "square" ? Math.PI / 4 : Math.PI / 6;
-  const points = polygonPoints(x, y, radius, sides, rotation)
-    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+  const points = polygonPoints(x, y, radius, sides, rotation);
+  return `M ${points.map((point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" L ")} Z`;
+}
+
+function svgDot(
+  x: number,
+  y: number,
+  radius: number,
+  shape: DotShape,
+  material: Material = "smooth",
+  materialAmount = 45,
+  textureSeed = 0,
+) {
+  if (material === "smooth") {
+    if (shape === "circle") {
+      return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}"/>`;
+    }
+    const sides = shape === "square" ? 4 : 6;
+    const rotation = shape === "square" ? Math.PI / 4 : Math.PI / 6;
+    const points = polygonPoints(x, y, radius, sides, rotation)
+      .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+      .join(" ");
+    return `<polygon points="${points}"/>`;
+  }
+
+  const holes = materialHoles(x, y, radius, materialAmount, textureSeed)
+    .map((hole) => svgCirclePath(hole.x, hole.y, hole.radius))
     .join(" ");
-  return `<polygon points="${points}"/>`;
+  return `<path fill-rule="evenodd" d="${svgDotPath(x, y, radius, shape)} ${holes}"/>`;
 }
 
 async function loadSourceAsset(file: File): Promise<SourceAsset> {
@@ -995,8 +1075,18 @@ export default function HalftoneStudio() {
           channel.settings,
           sourceAsset,
           imageMetrics,
-          (x, y, radius) => {
-            elements.push(svgDot(x, y, radius, channel.settings.dotShape));
+          (x, y, radius, textureSeed) => {
+            elements.push(
+              svgDot(
+                x,
+                y,
+                radius,
+                channel.settings.dotShape,
+                channel.material,
+                channel.materialAmount,
+                textureSeed,
+              ),
+            );
           },
           channel.offsetX,
           channel.offsetY,
@@ -1431,7 +1521,7 @@ export default function HalftoneStudio() {
                               }
                             />
                             <p className="material-note">
-                              模拟油墨缺失与网点磨损；预览和导出保持一致。
+                              在网点内部生成颗粒孔洞与破损边缘；预览和导出保持一致。
                             </p>
                           </>
                         )}
