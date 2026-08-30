@@ -62,6 +62,8 @@ type ChannelState = {
   materialAmount: number;
   fractalScale: number;
   fractalComplexity: number;
+  fractalFrequencyRatio: number;
+  fractalLayerWeight: number;
   fractalContrast: number;
   fractalBrightness: number;
   fractalAngle: number;
@@ -129,6 +131,8 @@ function createDefaultChannels(): ChannelState[] {
     materialAmount: 45,
     fractalScale: 100,
     fractalComplexity: 4,
+    fractalFrequencyRatio: 2,
+    fractalLayerWeight: 50,
     fractalContrast: 125,
     fractalBrightness: 0,
     fractalAngle: 0,
@@ -274,7 +278,6 @@ function forEachDot(
   gridOffsetX = 0,
   gridOffsetY = 0,
   material: Material = "smooth",
-  materialAmount = 45,
   materialSeed = 0,
 ) {
   const cellPx = Math.max(4, (settings.cellSize / settings.widthMm) * width);
@@ -315,7 +318,7 @@ function forEachDot(
       const radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
       const textureSeed =
         material !== "smooth"
-          ? materialSeed + column * 31.7 + row * 91.3 + materialAmount * 0.17
+          ? materialSeed + column * 31.7 + row * 91.3
           : 0;
       callback(x, y, radius, textureSeed);
     }
@@ -348,6 +351,8 @@ function fractalNoise(
   y: number,
   complexity: number,
   seed: number,
+  frequencyRatio: number,
+  layerWeight: number,
 ) {
   const clampedComplexity = clamp(complexity, 1, 6);
   const wholeOctaves = Math.floor(clampedComplexity);
@@ -357,6 +362,8 @@ function fractalNoise(
   let total = 0;
   let weight = 0;
   const octaveCount = wholeOctaves + (partialOctave > 0 ? 1 : 0);
+  const frequencyMultiplier = clamp(frequencyRatio, 1.1, 4);
+  const amplitudeMultiplier = clamp(layerWeight, 0.05, 0.95);
 
   for (let octave = 0; octave < octaveCount; octave += 1) {
     const octaveWeight =
@@ -365,20 +372,19 @@ function fractalNoise(
       smoothNoise(x * frequency, y * frequency, seed + octave * 17) *
       octaveWeight;
     weight += octaveWeight;
-    frequency *= 2;
-    amplitude *= 0.5;
+    frequency *= frequencyMultiplier;
+    amplitude *= amplitudeMultiplier;
   }
   return weight > 0 ? total / weight : 0.5;
 }
 
-function textureErosionAmount(
+function fractalErosionAt(
   channel: ChannelState,
   x: number,
   y: number,
   width: number,
   height: number,
 ) {
-  if (channel.material === "mottled") return channel.materialAmount;
   if (channel.material !== "fractal") return 0;
 
   const rotated = rotatePoint(
@@ -395,6 +401,8 @@ function textureErosionAmount(
       evolution * 1.73,
     channel.fractalComplexity,
     channel.id.charCodeAt(0),
+    channel.fractalFrequencyRatio,
+    channel.fractalLayerWeight / 100,
   );
   const adjusted = clamp(
     (noise - 0.5) * (channel.fractalContrast / 100) +
@@ -403,7 +411,7 @@ function textureErosionAmount(
     0,
     1,
   );
-  return channel.materialAmount * (1 - adjusted);
+  return 1 - adjusted;
 }
 
 type MaterialHole = { x: number; y: number; radius: number };
@@ -434,6 +442,45 @@ function materialHoles(
       y: y + Math.sin(angle) * distance,
       radius: Math.max(0.08, holeRadius),
     };
+  });
+}
+
+function channelMaterialHoles(
+  channel: ChannelState,
+  x: number,
+  y: number,
+  radius: number,
+  width: number,
+  height: number,
+  seed: number,
+) {
+  if (channel.material === "smooth") return [];
+  if (channel.material === "mottled") {
+    return materialHoles(x, y, radius, channel.materialAmount, seed);
+  }
+
+  const strength = clamp(channel.materialAmount / 100, 0, 1);
+  if (strength <= 0) return [];
+
+  // Keep candidate positions stable while every candidate samples the same
+  // continuous, weighted multi-frequency field at its own world position.
+  return materialHoles(x, y, radius, 100, seed).flatMap((hole, index) => {
+    const erosion = fractalErosionAt(
+      channel,
+      hole.x,
+      hole.y,
+      width,
+      height,
+    );
+    const coverage = clamp(erosion * strength, 0, 1);
+    const threshold = latticeNoise(index, 113, seed + 41);
+    if (threshold > clamp(coverage * 1.65, 0, 1)) return [];
+    return [
+      {
+        ...hole,
+        radius: hole.radius * (0.35 + coverage * 1.1),
+      },
+    ];
   });
 }
 
@@ -518,22 +565,17 @@ function drawCompositePattern(
       imageMetrics,
       (x, y, radius, textureSeed) => {
         if (textured) {
-          const erosionAmount = textureErosionAmount(
-            channel,
-            x,
-            y,
-            width,
-            height,
-          );
           context.beginPath();
           traceDot(context, x, y, radius, channel.settings.dotShape);
           traceMaterialHoles(
             context,
-            materialHoles(
+            channelMaterialHoles(
+              channel,
               x,
               y,
               radius,
-              erosionAmount,
+              width,
+              height,
               textureSeed,
             ),
           );
@@ -545,8 +587,7 @@ function drawCompositePattern(
       channel.offsetX,
       channel.offsetY,
       channel.material,
-      channel.materialAmount,
-      channel.id.charCodeAt(0) + channel.fractalEvolution * 0.37,
+      channel.id.charCodeAt(0),
     );
     if (!textured) context.fill();
   }
@@ -651,8 +692,7 @@ function svgDot(
   radius: number,
   shape: DotShape,
   material: Material = "smooth",
-  materialAmount = 45,
-  textureSeed = 0,
+  holes: MaterialHole[] = [],
 ) {
   if (material === "smooth") {
     if (shape === "circle") {
@@ -666,10 +706,10 @@ function svgDot(
     return `<polygon points="${points}"/>`;
   }
 
-  const holes = materialHoles(x, y, radius, materialAmount, textureSeed)
+  const holePaths = holes
     .map((hole) => svgCirclePath(hole.x, hole.y, hole.radius))
     .join(" ");
-  return `<path fill-rule="evenodd" d="${svgDotPath(x, y, radius, shape)} ${holes}"/>`;
+  return `<path fill-rule="evenodd" d="${svgDotPath(x, y, radius, shape)} ${holePaths}"/>`;
 }
 
 async function loadSourceAsset(file: File): Promise<SourceAsset> {
@@ -955,6 +995,8 @@ export default function HalftoneStudio() {
           | "materialAmount"
           | "fractalScale"
           | "fractalComplexity"
+          | "fractalFrequencyRatio"
+          | "fractalLayerWeight"
           | "fractalContrast"
           | "fractalBrightness"
           | "fractalAngle"
@@ -1106,6 +1148,8 @@ export default function HalftoneStudio() {
               materialAmount: 45,
               fractalScale: 100,
               fractalComplexity: 4,
+              fractalFrequencyRatio: 2,
+              fractalLayerWeight: 50,
               fractalContrast: 125,
               fractalBrightness: 0,
               fractalAngle: 0,
@@ -1195,12 +1239,14 @@ export default function HalftoneStudio() {
           sourceAsset,
           imageMetrics,
           (x, y, radius, textureSeed) => {
-            const erosionAmount = textureErosionAmount(
+            const holes = channelMaterialHoles(
               channel,
               x,
               y,
+              radius,
               width,
               height,
+              textureSeed,
             );
             elements.push(
               svgDot(
@@ -1209,16 +1255,14 @@ export default function HalftoneStudio() {
                 radius,
                 channel.settings.dotShape,
                 channel.material,
-                erosionAmount,
-                textureSeed,
+                holes,
               ),
             );
           },
           channel.offsetX,
           channel.offsetY,
           channel.material,
-          channel.materialAmount,
-          channel.id.charCodeAt(0) + channel.fractalEvolution * 0.37,
+          channel.id.charCodeAt(0),
         );
         return `<g data-channel="${channel.id}" fill="${escapeXml(channel.settings.ink)}" opacity="${channel.strength / 100}" style="mix-blend-mode:multiply">${elements.join("")}</g>`;
       })
@@ -1679,6 +1723,31 @@ export default function HalftoneStudio() {
                                   }
                                 />
                                 <MetricSlider
+                                  label="频率倍率"
+                                  value={channel.fractalFrequencyRatio}
+                                  suffix="×"
+                                  min={1.5}
+                                  max={3}
+                                  step={0.1}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalFrequencyRatio: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="层权重衰减"
+                                  value={channel.fractalLayerWeight}
+                                  suffix="%"
+                                  min={20}
+                                  max={80}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalLayerWeight: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
                                   label="杂色对比度"
                                   value={channel.fractalContrast}
                                   suffix="%"
@@ -1754,7 +1823,7 @@ export default function HalftoneStudio() {
                             )}
                             <p className="material-note">
                               {channel.material === "fractal"
-                                ? "多层连续杂色控制网点侵蚀密度；演化会生成新的纹理状态。"
+                                ? "不同频率的连续噪声按层权重衰减后叠加，并逐点控制网点内部孔洞；演化会平移叠加场。"
                                 : "在网点内部生成颗粒孔洞与破损边缘；预览和导出保持一致。"}
                             </p>
                           </>

@@ -80,6 +80,8 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /纹理强度/);
   assert.match(source, /杂色缩放/);
   assert.match(source, /复杂度/);
+  assert.match(source, /频率倍率/);
+  assert.match(source, /层权重衰减/);
   assert.match(source, /杂色对比度/);
   assert.match(source, /杂色亮度/);
   assert.match(source, /杂色旋转/);
@@ -90,13 +92,17 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /function latticeNoise/);
   assert.match(source, /function smoothNoise/);
   assert.match(source, /function fractalNoise/);
-  assert.match(source, /function textureErosionAmount/);
+  assert.match(source, /function fractalErosionAt/);
   assert.match(source, /function materialHoles/);
+  assert.match(source, /function channelMaterialHoles/);
+  assert.match(source, /fractalErosionAt\(\s*channel,\s*hole\.x,\s*hole\.y/);
   assert.match(source, /edgeChip = index % 3 === 0/);
   assert.match(source, /context\.fill\("evenodd"\)/);
   assert.match(source, /fill-rule="evenodd"/);
   assert.match(source, /channel\.materialAmount/);
   assert.match(source, /channel\.fractalComplexity/);
+  assert.match(source, /channel\.fractalFrequencyRatio/);
+  assert.match(source, /channel\.fractalLayerWeight/);
   assert.doesNotMatch(source, /channel\.sourceAsset/);
   assert.doesNotMatch(source, /channel\.imageMetrics/);
 });
