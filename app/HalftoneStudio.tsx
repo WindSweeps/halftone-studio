@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 type Pattern = "wave" | "radial" | "linear" | "image";
 type DotShape = "circle" | "square" | "hexagon";
 type Lattice = "square" | "hexagonal";
-type Material = "smooth" | "mottled";
+type Material = "smooth" | "mottled" | "fractal";
 type View = "studio" | "editor" | "complete";
 type ChannelId = "C" | "M" | "Y" | "K";
 
@@ -60,6 +60,14 @@ type ChannelState = {
   offsetY: number;
   material: Material;
   materialAmount: number;
+  fractalScale: number;
+  fractalComplexity: number;
+  fractalContrast: number;
+  fractalBrightness: number;
+  fractalAngle: number;
+  fractalEvolution: number;
+  fractalOffsetX: number;
+  fractalOffsetY: number;
   settings: Settings;
 };
 
@@ -119,6 +127,14 @@ function createDefaultChannels(): ChannelState[] {
     offsetY: 0,
     material: "smooth",
     materialAmount: 45,
+    fractalScale: 100,
+    fractalComplexity: 4,
+    fractalContrast: 125,
+    fractalBrightness: 0,
+    fractalAngle: 0,
+    fractalEvolution: 0,
+    fractalOffsetX: 0,
+    fractalOffsetY: 0,
     settings: { ...DEFAULTS, ink: preset.color },
   }));
 }
@@ -298,7 +314,7 @@ function forEachDot(
       );
       const radius = Math.max(0.18, tone * cellPx * 0.49 * (settings.dotScale / 100));
       const textureSeed =
-        material === "mottled"
+        material !== "smooth"
           ? materialSeed + column * 31.7 + row * 91.3 + materialAmount * 0.17
           : 0;
       callback(x, y, radius, textureSeed);
@@ -309,6 +325,85 @@ function forEachDot(
 function latticeNoise(x: number, y: number, seed: number) {
   const value = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
   return value - Math.floor(value);
+}
+
+function smoothNoise(x: number, y: number, seed: number) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const tx = x - x0;
+  const ty = y - y0;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const top =
+    latticeNoise(x0, y0, seed) * (1 - sx) +
+    latticeNoise(x0 + 1, y0, seed) * sx;
+  const bottom =
+    latticeNoise(x0, y0 + 1, seed) * (1 - sx) +
+    latticeNoise(x0 + 1, y0 + 1, seed) * sx;
+  return top * (1 - sy) + bottom * sy;
+}
+
+function fractalNoise(
+  x: number,
+  y: number,
+  complexity: number,
+  seed: number,
+) {
+  const clampedComplexity = clamp(complexity, 1, 6);
+  const wholeOctaves = Math.floor(clampedComplexity);
+  const partialOctave = clampedComplexity - wholeOctaves;
+  let frequency = 1;
+  let amplitude = 1;
+  let total = 0;
+  let weight = 0;
+  const octaveCount = wholeOctaves + (partialOctave > 0 ? 1 : 0);
+
+  for (let octave = 0; octave < octaveCount; octave += 1) {
+    const octaveWeight =
+      octave < wholeOctaves ? amplitude : amplitude * partialOctave;
+    total +=
+      smoothNoise(x * frequency, y * frequency, seed + octave * 17) *
+      octaveWeight;
+    weight += octaveWeight;
+    frequency *= 2;
+    amplitude *= 0.5;
+  }
+  return weight > 0 ? total / weight : 0.5;
+}
+
+function textureErosionAmount(
+  channel: ChannelState,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  if (channel.material === "mottled") return channel.materialAmount;
+  if (channel.material !== "fractal") return 0;
+
+  const rotated = rotatePoint(
+    x / width - 0.5,
+    y / height - 0.5,
+    channel.fractalAngle,
+  );
+  const scale = Math.max(0.12, channel.fractalScale / 100);
+  const evolution = channel.fractalEvolution / 360;
+  const noise = fractalNoise(
+    ((rotated.x + channel.fractalOffsetX / 100) * 4) / scale +
+      evolution * 2.31,
+    ((rotated.y + channel.fractalOffsetY / 100) * 4) / scale -
+      evolution * 1.73,
+    channel.fractalComplexity,
+    channel.id.charCodeAt(0),
+  );
+  const adjusted = clamp(
+    (noise - 0.5) * (channel.fractalContrast / 100) +
+      0.5 +
+      channel.fractalBrightness / 100,
+    0,
+    1,
+  );
+  return channel.materialAmount * (1 - adjusted);
 }
 
 type MaterialHole = { x: number; y: number; radius: number };
@@ -411,9 +506,10 @@ function drawCompositePattern(
 
   for (const channel of channels) {
     if (!channel.active || channel.strength <= 0) continue;
+    const textured = channel.material !== "smooth";
     context.globalAlpha = channel.strength / 100;
     context.fillStyle = channel.settings.ink;
-    if (channel.material === "smooth") context.beginPath();
+    if (!textured) context.beginPath();
     forEachDot(
       width,
       height,
@@ -421,7 +517,14 @@ function drawCompositePattern(
       sourceAsset,
       imageMetrics,
       (x, y, radius, textureSeed) => {
-        if (channel.material === "mottled") {
+        if (textured) {
+          const erosionAmount = textureErosionAmount(
+            channel,
+            x,
+            y,
+            width,
+            height,
+          );
           context.beginPath();
           traceDot(context, x, y, radius, channel.settings.dotShape);
           traceMaterialHoles(
@@ -430,7 +533,7 @@ function drawCompositePattern(
               x,
               y,
               radius,
-              channel.materialAmount,
+              erosionAmount,
               textureSeed,
             ),
           );
@@ -443,9 +546,9 @@ function drawCompositePattern(
       channel.offsetY,
       channel.material,
       channel.materialAmount,
-      channel.id.charCodeAt(0),
+      channel.id.charCodeAt(0) + channel.fractalEvolution * 0.37,
     );
-    if (channel.material === "smooth") context.fill();
+    if (!textured) context.fill();
   }
 
   context.globalAlpha = 1;
@@ -850,6 +953,14 @@ export default function HalftoneStudio() {
           | "offsetY"
           | "material"
           | "materialAmount"
+          | "fractalScale"
+          | "fractalComplexity"
+          | "fractalContrast"
+          | "fractalBrightness"
+          | "fractalAngle"
+          | "fractalEvolution"
+          | "fractalOffsetX"
+          | "fractalOffsetY"
         >
       >,
     ) => {
@@ -993,6 +1104,14 @@ export default function HalftoneStudio() {
               offsetY: 0,
               material: "smooth",
               materialAmount: 45,
+              fractalScale: 100,
+              fractalComplexity: 4,
+              fractalContrast: 125,
+              fractalBrightness: 0,
+              fractalAngle: 0,
+              fractalEvolution: 0,
+              fractalOffsetX: 0,
+              fractalOffsetY: 0,
               settings: {
                 ...channel.settings,
                 dotShape: DEFAULTS.dotShape,
@@ -1076,6 +1195,13 @@ export default function HalftoneStudio() {
           sourceAsset,
           imageMetrics,
           (x, y, radius, textureSeed) => {
+            const erosionAmount = textureErosionAmount(
+              channel,
+              x,
+              y,
+              width,
+              height,
+            );
             elements.push(
               svgDot(
                 x,
@@ -1083,7 +1209,7 @@ export default function HalftoneStudio() {
                 radius,
                 channel.settings.dotShape,
                 channel.material,
-                channel.materialAmount,
+                erosionAmount,
                 textureSeed,
               ),
             );
@@ -1092,7 +1218,7 @@ export default function HalftoneStudio() {
           channel.offsetY,
           channel.material,
           channel.materialAmount,
-          channel.id.charCodeAt(0),
+          channel.id.charCodeAt(0) + channel.fractalEvolution * 0.37,
         );
         return `<g data-channel="${channel.id}" fill="${escapeXml(channel.settings.ink)}" opacity="${channel.strength / 100}" style="mix-blend-mode:multiply">${elements.join("")}</g>`;
       })
@@ -1504,12 +1630,17 @@ export default function HalftoneStudio() {
                           >
                             <option value="smooth">平滑矢量</option>
                             <option value="mottled">印刷斑驳</option>
+                            <option value="fractal">分形杂色</option>
                           </select>
                         </label>
-                        {channel.material === "mottled" && (
+                        {channel.material !== "smooth" && (
                           <>
                             <MetricSlider
-                              label="斑驳程度"
+                              label={
+                                channel.material === "fractal"
+                                  ? "纹理强度"
+                                  : "斑驳程度"
+                              }
                               value={channel.materialAmount}
                               suffix="%"
                               min={0}
@@ -1520,8 +1651,111 @@ export default function HalftoneStudio() {
                                 })
                               }
                             />
+                            {channel.material === "fractal" && (
+                              <div className="fractal-controls">
+                                <MetricSlider
+                                  label="杂色缩放"
+                                  value={channel.fractalScale}
+                                  suffix="%"
+                                  min={20}
+                                  max={300}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalScale: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="复杂度"
+                                  value={channel.fractalComplexity}
+                                  suffix=""
+                                  min={1}
+                                  max={6}
+                                  step={0.1}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalComplexity: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="杂色对比度"
+                                  value={channel.fractalContrast}
+                                  suffix="%"
+                                  min={0}
+                                  max={200}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalContrast: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="杂色亮度"
+                                  value={channel.fractalBrightness}
+                                  suffix="%"
+                                  min={-100}
+                                  max={100}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalBrightness: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="杂色旋转"
+                                  value={channel.fractalAngle}
+                                  suffix="°"
+                                  min={-180}
+                                  max={180}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalAngle: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="演化"
+                                  value={channel.fractalEvolution}
+                                  suffix="°"
+                                  min={0}
+                                  max={720}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalEvolution: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="杂色 X 位移"
+                                  value={channel.fractalOffsetX}
+                                  suffix="%"
+                                  min={-100}
+                                  max={100}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalOffsetX: value,
+                                    })
+                                  }
+                                />
+                                <MetricSlider
+                                  label="杂色 Y 位移"
+                                  value={channel.fractalOffsetY}
+                                  suffix="%"
+                                  min={-100}
+                                  max={100}
+                                  onChange={(value) =>
+                                    updateChannel(channel.id, {
+                                      fractalOffsetY: value,
+                                    })
+                                  }
+                                />
+                              </div>
+                            )}
                             <p className="material-note">
-                              在网点内部生成颗粒孔洞与破损边缘；预览和导出保持一致。
+                              {channel.material === "fractal"
+                                ? "多层连续杂色控制网点侵蚀密度；演化会生成新的纹理状态。"
+                                : "在网点内部生成颗粒孔洞与破损边缘；预览和导出保持一致。"}
                             </p>
                           </>
                         )}
