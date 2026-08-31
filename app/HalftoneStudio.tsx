@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 type Pattern = "wave" | "radial" | "linear" | "image";
 type DotShape = "circle" | "square" | "hexagon";
 type Lattice = "square" | "hexagonal";
 type Material = "smooth" | "mottled" | "fractal";
+type FractalType = "basic" | "turbulentSmooth" | "turbulentSharp" | "max" | "strings";
+type NoiseInterpolation = "block" | "linear" | "soft";
+type NoiseOverflow = "clip" | "softClamp" | "wrapBack";
 type View = "studio" | "editor" | "complete";
 type ChannelId = "C" | "M" | "Y" | "K";
 
@@ -60,16 +63,27 @@ type ChannelState = {
   offsetY: number;
   material: Material;
   materialAmount: number;
+  fractalType: FractalType;
+  fractalNoiseType: NoiseInterpolation;
+  fractalOverflow: NoiseOverflow;
+  fractalInvert: boolean;
   fractalScale: number;
+  fractalAspect: number;
   fractalComplexity: number;
-  fractalFrequencyRatio: number;
   fractalLayerWeight: number;
+  fractalSubScaling: number;
+  fractalSubRotation: number;
+  fractalSubOffsetX: number;
+  fractalSubOffsetY: number;
   fractalContrast: number;
   fractalBrightness: number;
   fractalAngle: number;
   fractalEvolution: number;
   fractalOffsetX: number;
   fractalOffsetY: number;
+  fractalRandomSeed: number;
+  fractalCycleEvolution: boolean;
+  fractalCycle: number;
   settings: Settings;
 };
 
@@ -129,16 +143,27 @@ function createDefaultChannels(): ChannelState[] {
     offsetY: 0,
     material: "smooth",
     materialAmount: 45,
+    fractalType: "turbulentSmooth",
+    fractalNoiseType: "soft",
+    fractalOverflow: "clip",
+    fractalInvert: false,
     fractalScale: 100,
+    fractalAspect: 100,
     fractalComplexity: 4,
-    fractalFrequencyRatio: 2,
     fractalLayerWeight: 50,
+    fractalSubScaling: 50,
+    fractalSubRotation: 0,
+    fractalSubOffsetX: 0,
+    fractalSubOffsetY: 0,
     fractalContrast: 125,
     fractalBrightness: 0,
     fractalAngle: 0,
     fractalEvolution: 0,
     fractalOffsetX: 0,
     fractalOffsetY: 0,
+    fractalRandomSeed: 0,
+    fractalCycleEvolution: false,
+    fractalCycle: 2,
     settings: { ...DEFAULTS, ink: preset.color },
   }));
 }
@@ -330,13 +355,19 @@ function latticeNoise(x: number, y: number, seed: number) {
   return value - Math.floor(value);
 }
 
-function smoothNoise(x: number, y: number, seed: number) {
+function smoothNoise(
+  x: number,
+  y: number,
+  seed: number,
+  interpolation: NoiseInterpolation = "soft",
+) {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
+  if (interpolation === "block") return latticeNoise(x0, y0, seed);
   const tx = x - x0;
   const ty = y - y0;
-  const sx = tx * tx * (3 - 2 * tx);
-  const sy = ty * ty * (3 - 2 * ty);
+  const sx = interpolation === "linear" ? tx : tx * tx * (3 - 2 * tx);
+  const sy = interpolation === "linear" ? ty : ty * ty * (3 - 2 * ty);
   const top =
     latticeNoise(x0, y0, seed) * (1 - sx) +
     latticeNoise(x0 + 1, y0, seed) * sx;
@@ -346,36 +377,109 @@ function smoothNoise(x: number, y: number, seed: number) {
   return top * (1 - sy) + bottom * sy;
 }
 
+function evolvingNoise(
+  x: number,
+  y: number,
+  seed: number,
+  evolution: number,
+  interpolation: NoiseInterpolation,
+  cycleEvolution: boolean,
+  cycle: number,
+) {
+  const revolutions = evolution / 360;
+  const cycleLength = Math.max(1, Math.round(cycle));
+  const state = cycleEvolution
+    ? ((revolutions % cycleLength) + cycleLength) % cycleLength
+    : Math.max(0, revolutions);
+  const stateIndex = Math.floor(state);
+  const nextIndex = cycleEvolution
+    ? (stateIndex + 1) % cycleLength
+    : stateIndex + 1;
+  const blend = state - stateIndex;
+  const smoothBlend = blend * blend * (3 - 2 * blend);
+  const current = smoothNoise(
+    x,
+    y,
+    seed + stateIndex * 101,
+    interpolation,
+  );
+  const next = smoothNoise(
+    x,
+    y,
+    seed + nextIndex * 101,
+    interpolation,
+  );
+  return current * (1 - smoothBlend) + next * smoothBlend;
+}
+
+function shapeFractalValue(value: number, type: FractalType) {
+  if (type === "turbulentSmooth") return 1 - Math.abs(value * 2 - 1);
+  if (type === "turbulentSharp") {
+    return Math.pow(1 - Math.abs(value * 2 - 1), 0.42);
+  }
+  return value;
+}
+
 function fractalNoise(
   x: number,
   y: number,
   complexity: number,
   seed: number,
-  frequencyRatio: number,
-  layerWeight: number,
+  channel: ChannelState,
 ) {
-  const clampedComplexity = clamp(complexity, 1, 6);
+  const clampedComplexity = clamp(complexity, 1, 8);
   const wholeOctaves = Math.floor(clampedComplexity);
   const partialOctave = clampedComplexity - wholeOctaves;
   let frequency = 1;
   let amplitude = 1;
   let total = 0;
   let weight = 0;
+  let maximum = 0;
   const octaveCount = wholeOctaves + (partialOctave > 0 ? 1 : 0);
-  const frequencyMultiplier = clamp(frequencyRatio, 1.1, 4);
-  const amplitudeMultiplier = clamp(layerWeight, 0.05, 0.95);
+  const frequencyMultiplier = 100 / clamp(channel.fractalSubScaling, 10, 400);
+  const amplitudeMultiplier = clamp(channel.fractalLayerWeight / 100, 0, 1);
 
   for (let octave = 0; octave < octaveCount; octave += 1) {
     const octaveWeight =
       octave < wholeOctaves ? amplitude : amplitude * partialOctave;
-    total +=
-      smoothNoise(x * frequency, y * frequency, seed + octave * 17) *
-      octaveWeight;
+    const subPoint = rotatePoint(
+      x * frequency,
+      y * frequency,
+      channel.fractalSubRotation * octave,
+    );
+    const stringX = channel.fractalType === "strings" ? subPoint.x * 0.24 : subPoint.x;
+    const stringY = channel.fractalType === "strings" ? subPoint.y * 2.6 : subPoint.y;
+    const layerValue = shapeFractalValue(
+      evolvingNoise(
+        stringX + (channel.fractalSubOffsetX / 100) * octave,
+        stringY + (channel.fractalSubOffsetY / 100) * octave,
+        seed + octave * 17,
+        channel.fractalEvolution,
+        channel.fractalNoiseType,
+        channel.fractalCycleEvolution,
+        channel.fractalCycle,
+      ),
+      channel.fractalType,
+    );
+    total += layerValue * octaveWeight;
+    maximum = Math.max(maximum, layerValue * (0.4 + octaveWeight * 0.6));
     weight += octaveWeight;
     frequency *= frequencyMultiplier;
     amplitude *= amplitudeMultiplier;
   }
+  if (channel.fractalType === "max") return maximum;
   return weight > 0 ? total / weight : 0.5;
+}
+
+function remapNoiseOverflow(value: number, overflow: NoiseOverflow) {
+  if (overflow === "softClamp") {
+    return 0.5 + Math.tanh((value - 0.5) * 2) / 2;
+  }
+  if (overflow === "wrapBack") {
+    const wrapped = ((value % 2) + 2) % 2;
+    return wrapped <= 1 ? wrapped : 2 - wrapped;
+  }
+  return clamp(value, 0, 1);
 }
 
 function fractalErosionAt(
@@ -387,30 +491,27 @@ function fractalErosionAt(
 ) {
   if (channel.material !== "fractal") return 0;
 
+  const aspect = clamp(channel.fractalAspect / 100, 0.1, 10);
   const rotated = rotatePoint(
-    x / width - 0.5,
+    (x / width - 0.5) / aspect,
     y / height - 0.5,
     channel.fractalAngle,
   );
-  const scale = Math.max(0.12, channel.fractalScale / 100);
-  const evolution = channel.fractalEvolution / 360;
+  const scale = Math.max(0.05, channel.fractalScale / 100);
   const noise = fractalNoise(
-    ((rotated.x + channel.fractalOffsetX / 100) * 4) / scale +
-      evolution * 2.31,
-    ((rotated.y + channel.fractalOffsetY / 100) * 4) / scale -
-      evolution * 1.73,
+    ((rotated.x + channel.fractalOffsetX / 100) * 4) / scale,
+    ((rotated.y + channel.fractalOffsetY / 100) * 4) / scale,
     channel.fractalComplexity,
-    channel.id.charCodeAt(0),
-    channel.fractalFrequencyRatio,
-    channel.fractalLayerWeight / 100,
+    channel.id.charCodeAt(0) + channel.fractalRandomSeed * 13,
+    channel,
   );
-  const adjusted = clamp(
+  let adjusted = remapNoiseOverflow(
     (noise - 0.5) * (channel.fractalContrast / 100) +
       0.5 +
       channel.fractalBrightness / 100,
-    0,
-    1,
+    channel.fractalOverflow,
   );
+  if (channel.fractalInvert) adjusted = 1 - adjusted;
   return 1 - adjusted;
 }
 
@@ -422,10 +523,11 @@ function materialHoles(
   radius: number,
   amountPercent: number,
   seed: number,
+  maximumCount = 8,
 ): MaterialHole[] {
   const amount = clamp(amountPercent / 100, 0, 1);
   if (amount <= 0 || radius <= 0.2) return [];
-  const count = Math.max(1, Math.ceil(amount * 8));
+  const count = Math.max(1, Math.ceil(amount * maximumCount));
 
   return Array.from({ length: count }, (_, index) => {
     const angle = latticeNoise(index, 17, seed) * Math.PI * 2;
@@ -459,12 +561,12 @@ function channelMaterialHoles(
     return materialHoles(x, y, radius, channel.materialAmount, seed);
   }
 
-  const strength = clamp(channel.materialAmount / 100, 0, 1);
+  const strength = clamp(channel.materialAmount / 100, 0, 2);
   if (strength <= 0) return [];
 
   // Keep candidate positions stable while every candidate samples the same
   // continuous, weighted multi-frequency field at its own world position.
-  return materialHoles(x, y, radius, 100, seed).flatMap((hole, index) => {
+  return materialHoles(x, y, radius, 100, seed, 18).flatMap((hole, index) => {
     const erosion = fractalErosionAt(
       channel,
       hole.x,
@@ -474,11 +576,11 @@ function channelMaterialHoles(
     );
     const coverage = clamp(erosion * strength, 0, 1);
     const threshold = latticeNoise(index, 113, seed + 41);
-    if (threshold > clamp(coverage * 1.65, 0, 1)) return [];
+    if (threshold > clamp(coverage * 1.8, 0, 1)) return [];
     return [
       {
         ...hole,
-        radius: hole.radius * (0.35 + coverage * 1.1),
+        radius: hole.radius * (0.3 + coverage * 2.15),
       },
     ];
   });
@@ -760,20 +862,31 @@ function MetricSlider({
   step?: number;
   onChange: (value: number) => void;
 }) {
+  const inputId = useId();
   return (
-    <label className="field">
-      <span className="field-label">
-        {label}
-        <span className="field-value">
-          {step < 0.1
-            ? value.toFixed(2)
-            : step < 1
-              ? value.toFixed(1)
-              : value}
-          {suffix}
+    <div className="field">
+      <label className="field-label" htmlFor={inputId}>
+        <span>{label}</span>
+        <span className="field-number-control">
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            aria-label={`${label}数值`}
+            onChange={(event) => {
+              const nextValue = Number(event.target.value);
+              if (Number.isFinite(nextValue)) {
+                onChange(clamp(nextValue, min, max));
+              }
+            }}
+          />
+          <span>{suffix}</span>
         </span>
-      </span>
+      </label>
       <input
+        id={inputId}
         type="range"
         min={min}
         max={max}
@@ -781,7 +894,7 @@ function MetricSlider({
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-    </label>
+    </div>
   );
 }
 
@@ -993,16 +1106,27 @@ export default function HalftoneStudio() {
           | "offsetY"
           | "material"
           | "materialAmount"
+          | "fractalType"
+          | "fractalNoiseType"
+          | "fractalOverflow"
+          | "fractalInvert"
           | "fractalScale"
+          | "fractalAspect"
           | "fractalComplexity"
-          | "fractalFrequencyRatio"
           | "fractalLayerWeight"
+          | "fractalSubScaling"
+          | "fractalSubRotation"
+          | "fractalSubOffsetX"
+          | "fractalSubOffsetY"
           | "fractalContrast"
           | "fractalBrightness"
           | "fractalAngle"
           | "fractalEvolution"
           | "fractalOffsetX"
           | "fractalOffsetY"
+          | "fractalRandomSeed"
+          | "fractalCycleEvolution"
+          | "fractalCycle"
         >
       >,
     ) => {
@@ -1146,16 +1270,27 @@ export default function HalftoneStudio() {
               offsetY: 0,
               material: "smooth",
               materialAmount: 45,
+              fractalType: "turbulentSmooth",
+              fractalNoiseType: "soft",
+              fractalOverflow: "clip",
+              fractalInvert: false,
               fractalScale: 100,
+              fractalAspect: 100,
               fractalComplexity: 4,
-              fractalFrequencyRatio: 2,
               fractalLayerWeight: 50,
+              fractalSubScaling: 50,
+              fractalSubRotation: 0,
+              fractalSubOffsetX: 0,
+              fractalSubOffsetY: 0,
               fractalContrast: 125,
               fractalBrightness: 0,
               fractalAngle: 0,
               fractalEvolution: 0,
               fractalOffsetX: 0,
               fractalOffsetY: 0,
+              fractalRandomSeed: 0,
+              fractalCycleEvolution: false,
+              fractalCycle: 2,
               settings: {
                 ...channel.settings,
                 dotShape: DEFAULTS.dotShape,
@@ -1679,151 +1814,306 @@ export default function HalftoneStudio() {
                         </label>
                         {channel.material !== "smooth" && (
                           <>
-                            <MetricSlider
-                              label={
-                                channel.material === "fractal"
-                                  ? "纹理强度"
-                                  : "斑驳程度"
-                              }
-                              value={channel.materialAmount}
-                              suffix="%"
-                              min={0}
-                              max={100}
-                              onChange={(value) =>
-                                updateChannel(channel.id, {
-                                  materialAmount: value,
-                                })
-                              }
-                            />
+                            {channel.material === "mottled" && (
+                              <MetricSlider
+                                label="斑驳程度"
+                                value={channel.materialAmount}
+                                suffix="%"
+                                min={0}
+                                max={100}
+                                onChange={(value) =>
+                                  updateChannel(channel.id, {
+                                    materialAmount: value,
+                                  })
+                                }
+                              />
+                            )}
                             {channel.material === "fractal" && (
                               <div className="fractal-controls">
-                                <MetricSlider
-                                  label="杂色缩放"
-                                  value={channel.fractalScale}
-                                  suffix="%"
-                                  min={20}
-                                  max={300}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalScale: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="复杂度"
-                                  value={channel.fractalComplexity}
-                                  suffix=""
-                                  min={1}
-                                  max={6}
-                                  step={0.1}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalComplexity: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="频率倍率"
-                                  value={channel.fractalFrequencyRatio}
-                                  suffix="×"
-                                  min={1.5}
-                                  max={3}
-                                  step={0.1}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalFrequencyRatio: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="层权重衰减"
-                                  value={channel.fractalLayerWeight}
-                                  suffix="%"
-                                  min={20}
-                                  max={80}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalLayerWeight: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="杂色对比度"
-                                  value={channel.fractalContrast}
-                                  suffix="%"
-                                  min={0}
-                                  max={200}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalContrast: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="杂色亮度"
-                                  value={channel.fractalBrightness}
-                                  suffix="%"
-                                  min={-100}
-                                  max={100}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalBrightness: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="杂色旋转"
-                                  value={channel.fractalAngle}
-                                  suffix="°"
-                                  min={-180}
-                                  max={180}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalAngle: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="演化"
-                                  value={channel.fractalEvolution}
-                                  suffix="°"
-                                  min={0}
-                                  max={720}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalEvolution: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="杂色 X 位移"
-                                  value={channel.fractalOffsetX}
-                                  suffix="%"
-                                  min={-100}
-                                  max={100}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalOffsetX: value,
-                                    })
-                                  }
-                                />
-                                <MetricSlider
-                                  label="杂色 Y 位移"
-                                  value={channel.fractalOffsetY}
-                                  suffix="%"
-                                  min={-100}
-                                  max={100}
-                                  onChange={(value) =>
-                                    updateChannel(channel.id, {
-                                      fractalOffsetY: value,
-                                    })
-                                  }
-                                />
+                                <details className="fractal-group" open>
+                                  <summary>01 / 基础噪声</summary>
+                                  <div className="fractal-group-body">
+                                    <label className="field">
+                                      <span className="field-label">分形类型</span>
+                                      <select
+                                        value={channel.fractalType}
+                                        onChange={(event) =>
+                                          updateChannel(channel.id, {
+                                            fractalType: event.target.value as FractalType,
+                                          })
+                                        }
+                                      >
+                                        <option value="basic">基础</option>
+                                        <option value="turbulentSmooth">湍流 · 平滑</option>
+                                        <option value="turbulentSharp">湍流 · 锐利</option>
+                                        <option value="max">最大值</option>
+                                        <option value="strings">丝状</option>
+                                      </select>
+                                    </label>
+                                    <label className="field">
+                                      <span className="field-label">噪声插值</span>
+                                      <select
+                                        value={channel.fractalNoiseType}
+                                        onChange={(event) =>
+                                          updateChannel(channel.id, {
+                                            fractalNoiseType: event.target.value as NoiseInterpolation,
+                                          })
+                                        }
+                                      >
+                                        <option value="block">块状</option>
+                                        <option value="linear">线性</option>
+                                        <option value="soft">柔和</option>
+                                      </select>
+                                    </label>
+                                    <MetricSlider
+                                      label="复杂度 · 叠加层数"
+                                      value={channel.fractalComplexity}
+                                      suffix=""
+                                      min={1}
+                                      max={8}
+                                      step={0.1}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalComplexity: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="随机种子"
+                                      value={channel.fractalRandomSeed}
+                                      suffix=""
+                                      min={0}
+                                      max={999}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalRandomSeed: value })
+                                      }
+                                    />
+                                    <div className="toggle-row">
+                                      反转杂色
+                                      <button
+                                        className="switch"
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={channel.fractalInvert}
+                                        aria-label="反转杂色"
+                                        onClick={() =>
+                                          updateChannel(channel.id, {
+                                            fractalInvert: !channel.fractalInvert,
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                  </div>
+                                </details>
+
+                                <details className="fractal-group" open>
+                                  <summary>02 / 子级叠加</summary>
+                                  <div className="fractal-group-body">
+                                    <MetricSlider
+                                      label="子级影响 · 每层权重"
+                                      value={channel.fractalLayerWeight}
+                                      suffix="%"
+                                      min={0}
+                                      max={100}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalLayerWeight: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="子级缩放 · 相对尺寸"
+                                      value={channel.fractalSubScaling}
+                                      suffix="%"
+                                      min={10}
+                                      max={400}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalSubScaling: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="子级旋转"
+                                      value={channel.fractalSubRotation}
+                                      suffix="°"
+                                      min={-180}
+                                      max={180}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalSubRotation: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="子级 X 偏移"
+                                      value={channel.fractalSubOffsetX}
+                                      suffix="%"
+                                      min={-200}
+                                      max={200}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalSubOffsetX: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="子级 Y 偏移"
+                                      value={channel.fractalSubOffsetY}
+                                      suffix="%"
+                                      min={-200}
+                                      max={200}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalSubOffsetY: value })
+                                      }
+                                    />
+                                  </div>
+                                </details>
+
+                                <details className="fractal-group" open>
+                                  <summary>03 / 变换</summary>
+                                  <div className="fractal-group-body">
+                                    <MetricSlider
+                                      label="整体缩放"
+                                      value={channel.fractalScale}
+                                      suffix="%"
+                                      min={5}
+                                      max={1000}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalScale: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="宽度比例"
+                                      value={channel.fractalAspect}
+                                      suffix="%"
+                                      min={10}
+                                      max={500}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalAspect: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="旋转"
+                                      value={channel.fractalAngle}
+                                      suffix="°"
+                                      min={-180}
+                                      max={180}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalAngle: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="位置 X"
+                                      value={channel.fractalOffsetX}
+                                      suffix="%"
+                                      min={-500}
+                                      max={500}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalOffsetX: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="位置 Y"
+                                      value={channel.fractalOffsetY}
+                                      suffix="%"
+                                      min={-500}
+                                      max={500}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalOffsetY: value })
+                                      }
+                                    />
+                                  </div>
+                                </details>
+
+                                <details className="fractal-group" open>
+                                  <summary>04 / 演化</summary>
+                                  <div className="fractal-group-body">
+                                    <MetricSlider
+                                      label="演化"
+                                      value={channel.fractalEvolution}
+                                      suffix="°"
+                                      min={0}
+                                      max={3600}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalEvolution: value })
+                                      }
+                                    />
+                                    <div className="toggle-row">
+                                      循环演化
+                                      <button
+                                        className="switch"
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={channel.fractalCycleEvolution}
+                                        aria-label="循环演化"
+                                        onClick={() =>
+                                          updateChannel(channel.id, {
+                                            fractalCycleEvolution: !channel.fractalCycleEvolution,
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                    {channel.fractalCycleEvolution && (
+                                      <MetricSlider
+                                        label="循环周期"
+                                        value={channel.fractalCycle}
+                                        suffix=" 转"
+                                        min={1}
+                                        max={10}
+                                        onChange={(value) =>
+                                          updateChannel(channel.id, { fractalCycle: value })
+                                        }
+                                      />
+                                    )}
+                                  </div>
+                                </details>
+
+                                <details className="fractal-group" open>
+                                  <summary>05 / 输出映射</summary>
+                                  <div className="fractal-group-body">
+                                    <MetricSlider
+                                      label="侵蚀量"
+                                      value={channel.materialAmount}
+                                      suffix="%"
+                                      min={0}
+                                      max={200}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { materialAmount: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="对比度"
+                                      value={channel.fractalContrast}
+                                      suffix="%"
+                                      min={-200}
+                                      max={500}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalContrast: value })
+                                      }
+                                    />
+                                    <MetricSlider
+                                      label="亮度"
+                                      value={channel.fractalBrightness}
+                                      suffix="%"
+                                      min={-200}
+                                      max={200}
+                                      onChange={(value) =>
+                                        updateChannel(channel.id, { fractalBrightness: value })
+                                      }
+                                    />
+                                    <label className="field">
+                                      <span className="field-label">溢出方式</span>
+                                      <select
+                                        value={channel.fractalOverflow}
+                                        onChange={(event) =>
+                                          updateChannel(channel.id, {
+                                            fractalOverflow: event.target.value as NoiseOverflow,
+                                          })
+                                        }
+                                      >
+                                        <option value="clip">剪切</option>
+                                        <option value="softClamp">柔和限制</option>
+                                        <option value="wrapBack">回绕</option>
+                                      </select>
+                                    </label>
+                                  </div>
+                                </details>
                               </div>
                             )}
                             <p className="material-note">
                               {channel.material === "fractal"
-                                ? "不同频率的连续噪声按层权重衰减后叠加，并逐点控制网点内部孔洞；演化会平移叠加场。"
+                                ? "复杂度决定层数，子级影响决定权重，子级缩放决定下一层尺寸；演化只改变噪声形态，不移动网点。"
                                 : "在网点内部生成颗粒孔洞与破损边缘；预览和导出保持一致。"}
                             </p>
                           </>
