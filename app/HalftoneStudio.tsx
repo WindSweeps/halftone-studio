@@ -863,22 +863,55 @@ function MetricSlider({
   onChange: (value: number) => void;
 }) {
   const inputId = useId();
+  const numberInputRef = useRef<HTMLInputElement>(null);
+  const [draftValue, setDraftValue] = useState(String(value));
+
+  useEffect(() => {
+    if (document.activeElement !== numberInputRef.current) {
+      setDraftValue(String(value));
+    }
+  }, [value]);
+
+  const commitDraft = () => {
+    const trimmed = draftValue.trim();
+    const isCompleteNumber = /^-?(?:\d+\.?\d*|\.\d+)$/.test(trimmed);
+    if (!isCompleteNumber) {
+      setDraftValue(String(value));
+      return;
+    }
+    const nextValue = Number(trimmed);
+    if (Number.isFinite(nextValue)) {
+      onChange(nextValue);
+      setDraftValue(String(nextValue));
+    }
+  };
+
   return (
     <div className="field">
       <label className="field-label" htmlFor={inputId}>
         <span>{label}</span>
         <span className="field-number-control">
           <input
-            type="number"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
+            ref={numberInputRef}
+            type="text"
+            inputMode="decimal"
+            value={draftValue}
             aria-label={`${label}数值`}
             onChange={(event) => {
-              const nextValue = Number(event.target.value);
-              if (Number.isFinite(nextValue)) {
-                onChange(clamp(nextValue, min, max));
+              const nextDraft = event.target.value;
+              setDraftValue(nextDraft);
+              if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(nextDraft.trim())) {
+                const nextValue = Number(nextDraft);
+                if (Number.isFinite(nextValue)) onChange(nextValue);
+              }
+            }}
+            onFocus={(event) => event.currentTarget.select()}
+            onBlur={commitDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                setDraftValue(String(value));
+                event.currentTarget.blur();
               }
             }}
           />
@@ -891,7 +924,7 @@ function MetricSlider({
         min={min}
         max={max}
         step={step}
-        value={value}
+        value={clamp(value, min, max)}
         onChange={(event) => onChange(Number(event.target.value))}
       />
     </div>

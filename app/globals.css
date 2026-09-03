@@ -508,13 +508,21 @@ h1 {
   white-space: nowrap;
 }
 
-.field-number-control input[type="number"] {
+.field-number-control input {
   width: 66px;
   height: 25px;
   padding: 0 5px;
-  border-color: color-mix(in srgb, var(--line) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
   text-align: right;
   font: inherit;
+}
+
+.field-number-control input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 select,

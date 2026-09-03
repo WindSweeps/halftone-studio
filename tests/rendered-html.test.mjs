@@ -70,6 +70,10 @@ test("includes the image editor flow and model-specific metrics", async () => {
   assert.match(source, /mix-blend-mode:multiply/);
   assert.match(source, /图案结构 · 所有通道共用/);
   assert.match(source, /function ChannelPatternControls/);
+  assert.match(source, /inputMode="decimal"/);
+  assert.match(source, /setDraftValue/);
+  assert.match(source, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
+  assert.match(source, /value=\{clamp\(value, min, max\)\}/);
   assert.match(source, /重复单元形状/);
   assert.match(source, /六角平移/);
   assert.match(source, /setSharedSettings/);
